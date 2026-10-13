@@ -125,7 +125,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "fastroute"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "ctrlc",
  "dhat",
@@ -146,11 +146,11 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "fr-dsn"
-version = "0.1.13"
+version = "0.1.14"
 
 [[package]]
 name = "fr-engine"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "fr-geom",
  "fr-jcompat",
@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "fr-geom"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "libm",
  "log",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "fr-io"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "fr-dsn",
  "fr-engine",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "fr-jcompat"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "fr-settings"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "fr-dsn",
 ]
