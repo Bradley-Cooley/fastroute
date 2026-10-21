@@ -81,6 +81,9 @@ pub struct BatchAutorouter {
     pass_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
     /// fastroute multi-start: shuffles the order of the first pass's signal items.
     pub order_seed: Option<i64>,
+    /// fastroute repair: items of these nets are routed first in the first pass (after the
+    /// plane items), so the connection a repair window was opened for gets the freed space.
+    pub priority_nets: Option<BTreeSet<NetNo>>,
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
@@ -197,6 +200,7 @@ impl BatchAutorouter {
             pass_threads: 0,
             pass_pool: None,
             order_seed: None,
+            priority_nets: None,
             fanout_timed_out: false,
             initial_unrouted_count: 0,
             pristine: None,
@@ -377,6 +381,14 @@ impl BatchAutorouter {
             fr_jcompat::random::shuffle(&mut signal, &mut rnd);
             items = plane;
             items.extend(signal);
+        }
+        if pass_no == 1 {
+            if let Some(first) = &self.priority_nets {
+                let (mut front, back): (Vec<ItemKey>, Vec<ItemKey>) =
+                    items.iter().partition(|&&k| board.item(k).net_numbers().iter().any(|n| first.contains(n)));
+                front.extend(back);
+                items = front;
+            }
         }
         let params = self.params();
         let ids: Vec<ItemId> = items.iter().map(|&k| board.item(k).id()).collect();
