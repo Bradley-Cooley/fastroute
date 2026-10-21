@@ -51,6 +51,28 @@ here. The engine-side ones are active unless `--parity` is given
 | Fixed vias without a trace are zone stitching vias | A locked via that no trace touches (GND zone stitching, thermal vias; KiCad exports them as `(type fix)`) is an unrouted item of its net to Freerouting, which routes a trace to every one of them: a board with 184 GND stitching vias got 211 extra GND traces (413 → 791 mm). The zone that joins these vias is not on the board (the plugin strips the planes), so the stitching vias of a net are now treated as connected to each other: a pad routed to any one of them is connected to the zone and to every other pad that reached one. Same board: GND traces 120 / 390 mm without the vias, 104 / 228 mm with them, 0 unrouted, KiCad DRC clean. `--parity` keeps Freerouting's behaviour. |
 | No endless walk around a ring of traces | `getConnectionItems` follows contacts until a fork; around a closed ring without a fork the Java loop never ends (it hung a run while the contact rules above were developed). The walk stops where it started. |
 
+## Region repair (`--repair`, new)
+
+The autorouter routes one connection at a time. When the last connections fail, routing
+them usually needs several existing routes nearby to move together, which one rip-up at a
+time rarely achieves. With `--repair` (or `--repair-time=SECONDS`, default budget 120 s) a
+stage after the routing stage (and multi-start) works on each unrouted connection:
+
+1. A window is opened along the connection's airline: the nearest unfixed connections
+   within a corridor (4 within 1 mm, then 8 within 2 mm, then 16 within 3 mm) are ripped,
+   whole up to their forks.
+2. The nets involved are re-routed, the failed net first, in six variants (three pass
+   orders, three rip-up cost factors 1/4/10), each on a board clone, in parallel.
+3. The best variant is kept only if it has fewer unrouted connections, or as many with
+   fewer clearance violations. Ties go to the lower variant index, so results do not
+   depend on thread timing.
+4. After an improvement the windows start again on the new board; the stage ends when no
+   window helps or the budget is spent (a window in progress is finished).
+
+Quick suite (16 boards, `-j 3`), stock settings vs `--repair-time=120`: unrouted 104 → 96,
+violations 4 → 4, 5 boards better (bm05 6 → 4, Aria 26 → 24, Inkjet_PiezoDriver 1 → 0,
+S1G 21 → 20, SunLeaf 29 → 27), none worse; total time 1929 → 2805 s.
+
 ## Length matching (`--tune`, new)
 
 Freerouting has no length matching. After routing and optimizing, fastroute can match groups
