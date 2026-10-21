@@ -115,6 +115,7 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--time-limit-mode=wall\|count\|disabled`, `--time-limit-factor=N` | How Freerouting's internal time limits are evaluated |
 | `--router.min_trace_width_um=<w>` | Never neck traces down below this width |
 | `--multi-start=N` | Rerun the autorouter with N−1 shuffled orders in parallel if connections remain unrouted (default 4) |
+| `--multi-start-costs` | Multi-start variants also scale the via costs (×0.5 / ×2) and rip-up costs (×0.5 / ×3), not only the first-pass order |
 | `--repair`, `--repair-time=SECONDS` | Region repair after routing: rip and re-route the copper along each unrouted connection in growing windows, keeping a result only if it is better (budget 120 s by default) |
 | `--no-enhancements` | Freerouting's behaviour without fastroute's routing/optimizer improvements (see [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md)) |
 | `--router.autorouter.max_threads=N` | Threads of the parallel autorouting pass (default: all cores; 1 = sequential pass) |

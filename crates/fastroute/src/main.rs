@@ -45,6 +45,7 @@ struct Args {
     no_enhancements: bool,
     multi_start: usize,
     repair: Option<f64>,
+    cost_portfolio: bool,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -70,6 +71,7 @@ fn parse_args() -> Result<Args, String> {
         no_enhancements: false,
         multi_start: 4,
         repair: None,
+        cost_portfolio: false,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -115,6 +117,11 @@ fn parse_args() -> Result<Args, String> {
                     .parse::<usize>()
                     .map_err(|_| format!("bad value in {a}"))?
                     .max(1);
+                i += 1;
+                continue;
+            }
+            "--multi-start-costs" => {
+                args.cost_portfolio = true;
                 i += 1;
                 continue;
             }
@@ -255,6 +262,8 @@ options:
   --multi-start=N          rerun the autorouter with N-1 shuffled orders in parallel if
                            connections stay unrouted (default 4; skipped after a first run
                            longer than 10 minutes)
+  --multi-start-costs      multi-start variants also scale the via and rip-up costs
+                           (x0.5 to x3), not only the first-pass order
   --repair                 after routing, rip and re-route the copper in growing windows
                            around each unrouted connection (variants in parallel, kept
                            only if better); time budget 120 s
@@ -547,6 +556,7 @@ fn run() -> Result<(), String> {
     let ctx = PipelineContext { stop, wall_clock_limits: limits, optimizer_mode,
         enhancements: !args.parity && !args.no_enhancements,
         multi_start: args.multi_start,
+        cost_portfolio: args.cost_portfolio && !args.parity && !args.no_enhancements,
         repair: (!args.parity && !args.no_enhancements)
             .then_some(args.repair)
             .flatten()

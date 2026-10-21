@@ -64,6 +64,9 @@ pub struct PipelineContext {
     /// unrouted, it is rerun this many times in total with shuffled first-pass orders (in
     /// parallel) and the best board is kept. 1 = off.
     pub multi_start: usize,
+    /// fastroute cost portfolio (`--multi-start-costs`): multi-start variants also scale the
+    /// via and rip-up costs (see [`PORTFOLIO`]), not only the first-pass order.
+    pub cost_portfolio: bool,
     /// fastroute region repair after the routing stage (`--repair`); `None` = off.
     pub repair: Option<repair::RepairOptions>,
     /// Called with the current board whenever a stage reached a new best state (see
@@ -123,6 +126,7 @@ impl std::fmt::Debug for PipelineContext {
             .field("optimizer_mode", &self.optimizer_mode)
             .field("enhancements", &self.enhancements)
             .field("multi_start", &self.multi_start)
+            .field("cost_portfolio", &self.cost_portfolio)
             .field("repair", &self.repair)
             .field("checkpoint", &self.checkpoint.is_some())
             .field("observer", &self.observer.is_some())
@@ -154,6 +158,7 @@ impl Default for PipelineContext {
             optimizer_mode: OptimizerMode::JavaCompat,
             enhancements: false,
             multi_start: 1,
+            cost_portfolio: false,
             repair: None,
             checkpoint: None,
             observer: None,
@@ -164,6 +169,23 @@ impl Default for PipelineContext {
 /// Multi-start variants run in parallel but each as long as the first run; after a longer
 /// first run they are skipped (a large board then spends an hour more for a few connections).
 const MULTI_START_MAX_FIRST_RUN: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// fastroute cost portfolio: (via cost factor, rip-up cost factor) of multi-start variant
+/// `v`, taken at `(v - 1) % len`. Cheap vias help boards that run out of room on one layer,
+/// dear vias boards that run out of via sites; high rip-up costs keep routed nets in place,
+/// low ones let new connections push through.
+const PORTFOLIO: [(f64, f64); 6] = [(0.5, 1.0), (2.0, 1.0), (1.0, 3.0), (0.5, 3.0), (2.0, 0.5), (1.0, 0.5)];
+
+/// The settings of multi-start variant `v` under the cost portfolio.
+fn portfolio_settings(settings: &RouterSettings, v: usize) -> RouterSettings {
+    let (via, ripup) = PORTFOLIO[(v - 1) % PORTFOLIO.len()];
+    let scale = |x: i32, f: f64| ((x as f64 * f).round() as i32).max(1);
+    let mut s = settings.clone();
+    s.scoring.via_costs = Some(scale(settings.get_via_costs(), via));
+    s.scoring.plane_via_costs = Some(scale(settings.get_plane_via_costs(), via));
+    s.set_start_ripup_costs(scale(settings.get_start_ripup_costs(), ripup));
+    s
+}
 
 /// The outcome of [`run_pipeline`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -276,15 +298,17 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
                 optimizer_mode: ctx.optimizer_mode,
                 enhancements: true,
                 multi_start: 1,
+                cost_portfolio: false,
                 repair: None,
                 checkpoint: ctx.checkpoint.clone(),
                 // the variants run in parallel; the viewer shows the first run
                 observer: None,
             };
-            let mut router = BatchAutorouter::for_job(&b, settings);
+            let variant_settings = if ctx.cost_portfolio { portfolio_settings(settings, v) } else { settings.clone() };
+            let mut router = BatchAutorouter::for_job(&b, &variant_settings);
             router.order_seed = Some(0x5eed_0000 + v as i64);
             router.pass_threads = 1; // the variants already run in parallel
-            router.run_batch_loop(&mut b, settings, &variant_ctx);
+            router.run_batch_loop(&mut b, &variant_settings, &variant_ctx);
             b.finish_autoroute();
             let s = StatsCache::new().score(&b, settings);
             (v, b, s)
@@ -294,7 +318,13 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
     let mut best: Option<(usize, RoutingBoard, stats::Score)> = None;
     for (v, b, s) in variants {
         log::info!(
-            "Multi-start variant {v}: {} unrouted, {} violations, router score {:.2}.",
+            "Multi-start variant {v}{}: {} unrouted, {} violations, router score {:.2}.",
+            if ctx.cost_portfolio {
+                let (via, ripup) = PORTFOLIO[(v - 1) % PORTFOLIO.len()];
+                format!(" (via costs x{via}, rip-up costs x{ripup})")
+            } else {
+                String::new()
+            },
             s.incomplete_count,
             s.clearance_violation_count,
             s.router_score as f64
