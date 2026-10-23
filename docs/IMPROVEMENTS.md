@@ -54,16 +54,29 @@ here. The engine-side ones are active unless `--parity` is given
 ## Cost portfolio for multi-start (`--multi-start-costs`, new)
 
 Multi-start reruns the routing stage with shuffled first-pass orders, but every variant
-uses the same costs, so variants tend to fail in the same places. With
-`--multi-start-costs` variant `v` also scales the via costs (and plane via costs) and the
-start rip-up costs by `(via, rip-up)` = (0.5, 1), (2, 1), (1, 3), (0.5, 3), (2, 0.5),
-(1, 0.5), taken at `(v - 1) % 6`. Variants are still compared with the job's own settings,
-and the first run is unchanged.
+uses the same costs, so variants tend to fail in the same places. `--multi-start-costs`
+adds `N - 1` more variants (`N` = `--multi-start`). Cost variant `k` uses the pass order of
+stock variant `k` and scales the via costs (and plane via costs) and the start rip-up
+costs by `(via, rip-up)` = (0.5, 1), (2, 1), (1, 3), (0.5, 3), (2, 0.5), (1, 0.5), taken
+at `(k - 1) % 6`. The stock variants still run, and on a tie they win, so the best board
+is never worse than without the flag (each variant is deterministic). Variants are
+compared with the job's own settings, and the first run is unchanged.
 
-Quick suite (16 boards, `-j 3`, default `--multi-start=4`), stock vs `--multi-start-costs`:
-unrouted 104 → 99, violations 4 → 4, 4 boards better (CM5 7 → 6, SunLeaf 29 → 26,
-mdbwerk 2 → 1, mightyduino 1 → 0), 1 worse (kitspace_PSLab 0 → 1: the stock order variant
-that finished it is replaced by a cost variant), vias 638 → 713, total time 1929 → 1846 s.
+An earlier version replaced the stock variants with the cost variants. That lost
+kitspace_PSLab (0 → 1 unrouted), because stock variant 3's order was the one that routed
+it fully.
+
+Quick suite (16 boards, `-j 3`, default `--multi-start=4`), against stock:
+
+| | unrouted | fully routed | vias | time |
+| --- | --- | --- | --- | --- |
+| stock | 104 | 4 | 638 | 1929 s |
+| `--multi-start-costs` | 98 | 5 | 710 | 2605 s |
+| `--multi-start-costs --repair-time=120` | 88 | 6 | 713 | 3670 s |
+
+With the flag alone, 4 boards get better and none get worse: CM5 7 → 6, SunLeaf 29 → 26,
+mdbwerk 2 → 1, mightyduino 1 → 0. With repair added, 8 get better and none get worse.
+Vias go up by about 11% because the cheap-via variants win more often.
 
 ## Region repair (`--repair`, new)
 

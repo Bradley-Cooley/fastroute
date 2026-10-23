@@ -262,8 +262,8 @@ options:
   --multi-start=N          rerun the autorouter with N-1 shuffled orders in parallel if
                            connections stay unrouted (default 4; skipped after a first run
                            longer than 10 minutes)
-  --multi-start-costs      multi-start variants also scale the via and rip-up costs
-                           (x0.5 to x3), not only the first-pass order
+  --multi-start-costs      add N-1 multi-start variants that also scale the via and
+                           rip-up costs (x0.5 to x3); the stock variants still run
   --repair                 after routing, rip and re-route the copper in growing windows
                            around each unrouted connection (variants in parallel, kept
                            only if better); time budget 120 s

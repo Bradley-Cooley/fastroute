@@ -64,8 +64,8 @@ pub struct PipelineContext {
     /// unrouted, it is rerun this many times in total with shuffled first-pass orders (in
     /// parallel) and the best board is kept. 1 = off.
     pub multi_start: usize,
-    /// fastroute cost portfolio (`--multi-start-costs`): multi-start variants also scale the
-    /// via and rip-up costs (see [`PORTFOLIO`]), not only the first-pass order.
+    /// fastroute cost portfolio (`--multi-start-costs`): `multi_start - 1` more variants that
+    /// also scale the via and rip-up costs (see [`PORTFOLIO`]), run next to the stock ones.
     pub cost_portfolio: bool,
     /// fastroute region repair after the routing stage (`--repair`); `None` = off.
     pub repair: Option<repair::RepairOptions>,
@@ -170,15 +170,15 @@ impl Default for PipelineContext {
 /// first run they are skipped (a large board then spends an hour more for a few connections).
 const MULTI_START_MAX_FIRST_RUN: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// fastroute cost portfolio: (via cost factor, rip-up cost factor) of multi-start variant
-/// `v`, taken at `(v - 1) % len`. Cheap vias help boards that run out of room on one layer,
+/// fastroute cost portfolio: (via cost factor, rip-up cost factor) of cost variant `k`
+/// (1-based, with the order seed of stock variant `k`), taken at `(k - 1) % len`. Cheap vias help boards that run out of room on one layer,
 /// dear vias boards that run out of via sites; high rip-up costs keep routed nets in place,
 /// low ones let new connections push through.
 const PORTFOLIO: [(f64, f64); 6] = [(0.5, 1.0), (2.0, 1.0), (1.0, 3.0), (0.5, 3.0), (2.0, 0.5), (1.0, 0.5)];
 
-/// The settings of multi-start variant `v` under the cost portfolio.
-fn portfolio_settings(settings: &RouterSettings, v: usize) -> RouterSettings {
-    let (via, ripup) = PORTFOLIO[(v - 1) % PORTFOLIO.len()];
+/// The settings of cost variant `k` of the cost portfolio.
+fn portfolio_settings(settings: &RouterSettings, k: usize) -> RouterSettings {
+    let (via, ripup) = PORTFOLIO[(k - 1) % PORTFOLIO.len()];
     let scale = |x: i32, f: f64| ((x as f64 * f).round() as i32).max(1);
     let mut s = settings.clone();
     s.scoring.via_costs = Some(scale(settings.get_via_costs(), via));
@@ -287,7 +287,11 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
     if first.incomplete_count - stats::ignored_incomplete_count(board) <= 0 || ctx.stop.is_stop_requested() {
         return;
     }
-    let variants: Vec<(usize, RoutingBoard, stats::Score)> = (1..ctx.multi_start)
+    // The cost portfolio adds its variants after the stock ones instead of replacing them, so
+    // the stock result is always among the candidates and the best one can only get better.
+    let extra = if ctx.cost_portfolio { ctx.multi_start.saturating_sub(1) } else { 0 };
+    let costs_of = |v: usize| (v >= ctx.multi_start).then(|| v + 1 - ctx.multi_start);
+    let variants: Vec<(usize, RoutingBoard, stats::Score)> = (1..ctx.multi_start + extra)
         .into_par_iter()
         .map(|v| {
             let mut b = start.clone();
@@ -304,9 +308,12 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
                 // the variants run in parallel; the viewer shows the first run
                 observer: None,
             };
-            let variant_settings = if ctx.cost_portfolio { portfolio_settings(settings, v) } else { settings.clone() };
+            let (variant_settings, seed) = match costs_of(v) {
+                Some(k) => (portfolio_settings(settings, k), k),
+                None => (settings.clone(), v),
+            };
             let mut router = BatchAutorouter::for_job(&b, &variant_settings);
-            router.order_seed = Some(0x5eed_0000 + v as i64);
+            router.order_seed = Some(0x5eed_0000 + seed as i64);
             router.pass_threads = 1; // the variants already run in parallel
             router.run_batch_loop(&mut b, &variant_settings, &variant_ctx);
             b.finish_autoroute();
@@ -319,11 +326,12 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
     for (v, b, s) in variants {
         log::info!(
             "Multi-start variant {v}{}: {} unrouted, {} violations, router score {:.2}.",
-            if ctx.cost_portfolio {
-                let (via, ripup) = PORTFOLIO[(v - 1) % PORTFOLIO.len()];
-                format!(" (via costs x{via}, rip-up costs x{ripup})")
-            } else {
-                String::new()
+            match costs_of(v) {
+                Some(k) => {
+                    let (via, ripup) = PORTFOLIO[(k - 1) % PORTFOLIO.len()];
+                    format!(" (order {k}, via costs x{via}, rip-up costs x{ripup})")
+                }
+                None => String::new(),
             },
             s.incomplete_count,
             s.clearance_violation_count,
