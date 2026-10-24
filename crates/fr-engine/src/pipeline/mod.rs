@@ -34,6 +34,7 @@ pub mod fanout;
 pub mod history;
 pub mod optimizer;
 mod parallel_pass;
+pub mod repair;
 pub mod stats;
 
 use fr_settings::{RouterSettings, ALGORITHM_CURRENT};
@@ -63,6 +64,8 @@ pub struct PipelineContext {
     /// unrouted, it is rerun this many times in total with shuffled first-pass orders (in
     /// parallel) and the best board is kept. 1 = off.
     pub multi_start: usize,
+    /// fastroute region repair after the routing stage (`--repair`); `None` = off.
+    pub repair: Option<repair::RepairOptions>,
     /// Called with the current board whenever a stage reached a new best state (see
     /// [`CheckpointKey`]); the CLI writes it as the session file, so a run that is stopped or
     /// killed still leaves its best result behind.
@@ -120,6 +123,7 @@ impl std::fmt::Debug for PipelineContext {
             .field("optimizer_mode", &self.optimizer_mode)
             .field("enhancements", &self.enhancements)
             .field("multi_start", &self.multi_start)
+            .field("repair", &self.repair)
             .field("checkpoint", &self.checkpoint.is_some())
             .field("observer", &self.observer.is_some())
             .finish()
@@ -150,6 +154,7 @@ impl Default for PipelineContext {
             optimizer_mode: OptimizerMode::JavaCompat,
             enhancements: false,
             multi_start: 1,
+            repair: None,
             checkpoint: None,
             observer: None,
         }
@@ -223,6 +228,13 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         // route and the optimizer gives up after its failure limit.
         ctx.stop.clear_stop_autorouter();
     }
+    if let Some(options) = ctx.repair {
+        if router_enabled && !ctx.stop.is_stop_requested() {
+            ctx.observe(board, &LiveEvent::Stage("repair"));
+            repair::repair_unrouted(board, settings, ctx, options);
+            ctx.stop.clear_stop_autorouter();
+        }
+    }
 
     // runOptimizationStage
     if run_optimizer && !ctx.stop.is_stop_requested() {
@@ -264,6 +276,7 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
                 optimizer_mode: ctx.optimizer_mode,
                 enhancements: true,
                 multi_start: 1,
+                repair: None,
                 checkpoint: ctx.checkpoint.clone(),
                 // the variants run in parallel; the viewer shows the first run
                 observer: None,

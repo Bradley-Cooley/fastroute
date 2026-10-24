@@ -44,6 +44,7 @@ struct Args {
     parity: bool,
     no_enhancements: bool,
     multi_start: usize,
+    repair: Option<f64>,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -68,6 +69,7 @@ fn parse_args() -> Result<Args, String> {
         parity: false,
         no_enhancements: false,
         multi_start: 4,
+        repair: None,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -113,6 +115,17 @@ fn parse_args() -> Result<Args, String> {
                     .parse::<usize>()
                     .map_err(|_| format!("bad value in {a}"))?
                     .max(1);
+                i += 1;
+                continue;
+            }
+            "--repair" => {
+                args.repair = Some(args.repair.unwrap_or(DEFAULT_REPAIR_SECS));
+                i += 1;
+                continue;
+            }
+            _ if a.starts_with("--repair-time=") => {
+                let secs = a["--repair-time=".len()..].parse::<f64>().map_err(|_| format!("bad value in {a}"))?;
+                args.repair = Some(secs.max(0.0));
                 i += 1;
                 continue;
             }
@@ -210,6 +223,8 @@ fn parse_args() -> Result<Args, String> {
 }
 
 const DEFAULT_LIVE_PORT: u16 = 7878;
+/// `--repair` without `--repair-time`: time budget of the repair stage.
+const DEFAULT_REPAIR_SECS: f64 = 120.0;
 
 const HELP: &str = "\
 usage: fastroute -de <design.dsn> [-do <out.ses>] [options] [--router.<path>=<value> ...]
@@ -240,6 +255,10 @@ options:
   --multi-start=N          rerun the autorouter with N-1 shuffled orders in parallel if
                            connections stay unrouted (default 4; skipped after a first run
                            longer than 10 minutes)
+  --repair                 after routing, rip and re-route the copper in growing windows
+                           around each unrouted connection (variants in parallel, kept
+                           only if better); time budget 120 s
+  --repair-time=SECONDS    --repair with this time budget
   --no-enhancements        Freerouting's behaviour without fastroute's improvements
   --parity                 byte-identical Freerouting results (deterministic, slower)
   --optimizer-mode=M       java-compat | parallel
@@ -528,6 +547,10 @@ fn run() -> Result<(), String> {
     let ctx = PipelineContext { stop, wall_clock_limits: limits, optimizer_mode,
         enhancements: !args.parity && !args.no_enhancements,
         multi_start: args.multi_start,
+        repair: (!args.parity && !args.no_enhancements)
+            .then_some(args.repair)
+            .flatten()
+            .map(|secs| fr_engine::pipeline::repair::RepairOptions { budget: std::time::Duration::from_secs_f64(secs) }),
         checkpoint,
         observer: Some(Arc::new(|board, ev| {
             match ev {
