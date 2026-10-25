@@ -19,6 +19,12 @@ Suites:
   FILE.dsn     a single board
   quick        16 boards that react to routing changes (unrouted connections or recent
                changes, each under ~100 s); run with -j 3, see QUICK_ARGS
+  dense:N      the N PCBench boards (default 12) with the most fine-pitch parts (at least
+               DENSE_MIN_PINS SMD pins at a pitch of at most DENSE_MAX_PITCH_UM, as
+               fastroute's `pipeline::escape`), at most DENSE_MAX_COMPONENTS parts, not in
+               quick; picked by scanning the DSN files; run with -j 3 (QUICK_ARGS)
+
+The `escape` column counts the unrouted connections with an end at a fine-pitch part.
 
 Default: dac,kicad (the 20 benchmark boards of docs/PERFORMANCE.md).
 """
@@ -26,6 +32,7 @@ Default: dac,kicad (the 20 benchmark boards of docs/PERFORMANCE.md).
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -39,6 +46,7 @@ COLUMNS = [
     ("time_s", "{:>8}"),
     ("rss_mb", "{:>7}"),
     ("unrouted", "{:>8}"),
+    ("escape", "{:>6}"),
     ("violations", "{:>10}"),
     ("vias", "{:>6}"),
     ("length_mm", "{:>10}"),
@@ -63,6 +71,56 @@ QUICK = [
 # thread count, so quick runs are only comparable with quick runs)
 QUICK_ARGS = ["--router.autorouter.max_threads=3", "--router.optimizer.max_threads=3"]
 
+# the dense suite: the same thresholds as fastroute's pipeline::escape
+DENSE_MIN_PINS = 16
+DENSE_MAX_PITCH_UM = 650.0
+DENSE_MAX_COMPONENTS = 150
+
+_TOKEN = r'("[^"]*"|[^\s()]+)'
+_UNIT = re.compile(r"\(unit\s+(\w+)\)")
+_IMAGE = re.compile(r"\(image\s+" + _TOKEN)
+_PIN = re.compile(r"\(pin\s+" + _TOKEN + r"\s+(?:\(rotate[^)]*\)\s+)?" + _TOKEN + r"\s+(-?[\d.]+)\s+(-?[\d.]+)")
+_PADSTACK = re.compile(r"\(padstack\s+" + _TOKEN)
+_PLACE = re.compile(r"\(place\s+" + _TOKEN + r"\s+-?[\d.]")
+_UM_PER = {"um": 1.0, "mm": 1000.0, "mil": 25.4, "inch": 25400.0, "cm": 10000.0}
+
+
+def dense_part_count(dsn):
+    """(number of placed fine-pitch parts, number of placed parts) of a DSN file.
+
+    A part is fine-pitch with at least DENSE_MIN_PINS single-layer pins whose median
+    nearest-neighbour distance is at most DENSE_MAX_PITCH_UM. Pins without a net count here
+    (fastroute counts only pins with a net), so this is a slightly wider pick."""
+    text = dsn.read_text(errors="replace")
+    m = _UNIT.search(text)
+    um = _UM_PER.get(m.group(1).lower(), 1.0) if m else 1.0
+    # single-layer padstacks: one (shape ...) line
+    smd = set()
+    for m in _PADSTACK.finditer(text):
+        end = text.find("(attach", m.end())
+        block = text[m.end(): end if end > 0 else m.end() + 2000]
+        if block.count("(shape") == 1:
+            smd.add(m.group(1))
+    dense_images = set()
+    images = list(_IMAGE.finditer(text))
+    for i, m in enumerate(images):
+        block = text[m.end(): images[i + 1].start() if i + 1 < len(images) else len(text)]
+        pts = [(float(p.group(3)), float(p.group(4))) for p in _PIN.finditer(block) if p.group(1) in smd]
+        if len(pts) < DENSE_MIN_PINS:
+            continue
+        nearest = sorted(min(((x - a) ** 2 + (y - b) ** 2) ** 0.5 for j, (a, b) in enumerate(pts) if j != k)
+                         for k, (x, y) in enumerate(pts))
+        if nearest[len(nearest) // 2] * um <= DENSE_MAX_PITCH_UM:
+            dense_images.add(m.group(1))
+    # (component IMAGE (place REF ...) (place REF ...))
+    dense = total = 0
+    for m in re.finditer(r"\(component\s+" + _TOKEN, text):
+        places = len(_PLACE.findall(text[m.end(): text.find("(component", m.end()) if text.find("(component", m.end()) > 0 else text.find("(library", m.end())]))
+        total += places
+        if m.group(1) in dense_images:
+            dense += places
+    return dense, total
+
 
 class Board:
     def __init__(self, name, dsn, args=()):
@@ -80,6 +138,17 @@ def suite_boards(spec):
             else:
                 boards.append(Board(name, FIXTURES / suite / f"{name}.dsn", QUICK_ARGS))
         return boards
+    if spec == "dense" or spec.startswith("dense:"):
+        n = int(spec.split(":", 1)[1]) if ":" in spec else 12
+        quick = {name for suite, name in QUICK if suite == "pcbench"}
+        picked = []
+        for p in sorted((FIXTURES / "PCBench").glob("*/unrouted.dsn")):
+            if any(p.parent.name.startswith(q) for q in quick):
+                continue
+            dense, total = dense_part_count(p)
+            if dense and total <= DENSE_MAX_COMPONENTS:
+                picked.append((-dense, p.parent.name, p))
+        return [Board("pcb/" + p.parent.name[:30], p, QUICK_ARGS) for _, _, p in sorted(picked)[:n]]
     if spec == "dac":
         return [Board(p.stem, p) for p in sorted((FIXTURES / "DAC2020_boards").glob("*.dsn"))]
     if spec == "kicad":
@@ -138,6 +207,7 @@ def run_board(board, binary, out, extra, diagnose, max_time):
         s = r["stats"]
         row.update(
             unrouted=s["unrouted"],
+            escape=s.get("unrouted_escape", ""),
             violations=s["violations"],
             vias=s["vias"],
             length_mm=f"{s['trace_length_mm']:.0f}" if s["trace_length_mm"] is not None else "",
@@ -170,7 +240,7 @@ def num(v):
 
 def totals(rows):
     t = {"board": f"TOTAL ({len(rows)} boards)"}
-    for c in ("time_s", "unrouted", "violations", "vias", "length_mm"):
+    for c in ("time_s", "unrouted", "escape", "violations", "vias", "length_mm"):
         vals = [num(r.get(c)) for r in rows]
         vals = [v for v in vals if v is not None]
         t[c] = f"{sum(vals):.0f}" if c != "time_s" else f"{sum(vals):.1f}"

@@ -11,6 +11,10 @@
 //! passes 1 and 10 would (rip-up allowed): `in_context` gives the attempt state, its message and
 //! how many items it ripped, and the unrouted count before, after it and after the tail removal
 //! that ends a pass.
+//!
+//! Each unrouted connection also says whether it starts at a dense part (`escape`: a fine-pitch
+//! SMD part, see `fr_engine::pipeline::escape`), with one end on a pin of the part or near its
+//! pads; `stats.unrouted_escape` counts them, and `dense_parts` lists the parts.
 
 use std::fmt::Write as _;
 
@@ -154,6 +158,8 @@ pub fn write_report(
     let airlines = checker.get_all_airlines(basic);
     let violations = all_clearance_violations(basic);
 
+    let dense = fr_engine::pipeline::escape::dense_parts(board);
+    let mut unrouted_escape = 0;
     let mut unrouted = Vec::new();
     let (mut congestion, mut blocked, mut ignored) = (0, 0, 0);
     for a in &airlines {
@@ -173,6 +179,16 @@ pub fn write_report(
             u.x(a.to_corner.x),
             u.y(a.to_corner.y),
         );
+        let ends = [(a.from_item, a.from_corner), (a.to_item, a.to_corner)];
+        match fr_engine::pipeline::escape::escape_contact(board, &dense, ends) {
+            Some(c) => {
+                if !is_ignored {
+                    unrouted_escape += 1;
+                }
+                write!(s, ", \"escape\": {{\"component\": {}, \"at_pin\": {}}}", json_str(&c.part.name), c.at_pin).unwrap();
+            }
+            None => s.push_str(", \"escape\": null"),
+        }
         if is_ignored {
             // net class ignored by the autorouter: never routed, nothing to diagnose
             ignored += 1;
@@ -254,7 +270,7 @@ pub fn write_report(
     .unwrap();
     writeln!(
         out,
-        "  \"stats\": {{\"layers\": {}, \"components\": {}, \"nets\": {}, \"pins\": {}, \"connections\": {}, \"unrouted\": {}, \"unrouted_ignored_classes\": {}, \"violations\": {}, \
+        "  \"stats\": {{\"layers\": {}, \"components\": {}, \"nets\": {}, \"pins\": {}, \"connections\": {}, \"unrouted\": {}, \"unrouted_ignored_classes\": {}, \"unrouted_escape\": {}, \"violations\": {}, \
          \"violations_unfixable\": {}, \"vias\": {}, \"vias_blind\": {}, \"vias_buried\": {}, \"traces\": {}, \"trace_length_mm\": {}, \
          \"bends_90\": {}, \"bends_45\": {}, \"bends_other\": {}, \"router_score\": {}, \"optimizer_score\": {}}},",
         opt_i(stats.layers.total_count),
@@ -264,6 +280,7 @@ pub fn write_report(
         opt_i(stats.connections.maximum_count),
         airlines.len(),
         airlines.iter().filter(|a| basic.rules.nets.get(a.net_number).is_some_and(|n| basic.rules.net_classes[n.get_net_class()].is_ignored_by_autorouter)).count(),
+        unrouted_escape,
         violations.len(),
         violations.iter().filter(|v| v.is_unfixable(basic)).count(),
         opt_i(stats.vias.total_count),
@@ -281,6 +298,11 @@ pub fn write_report(
     if loaded.is_some() {
         writeln!(out, "  \"diagnosis\": {{\"congestion\": {congestion}, \"blocked\": {blocked}, \"ignored\": {ignored}}},").unwrap();
     }
+    let dense_json: Vec<String> = dense
+        .iter()
+        .map(|p| format!("{{\"component\": {}, \"pins\": {}, \"pitch_mm\": {}}}", json_str(&p.name), p.pins.len(), num(p.pitch / u.per_mm)))
+        .collect();
+    writeln!(out, "  \"dense_parts\": [{}],", dense_json.join(", ")).unwrap();
     writeln!(out, "  \"unrouted\": [\n{}\n  ],", unrouted.join(",\n")).unwrap();
     writeln!(out, "  \"clearance_violations\": [\n{}\n  ]", viol.join(",\n")).unwrap();
     writeln!(out, "}}").unwrap();

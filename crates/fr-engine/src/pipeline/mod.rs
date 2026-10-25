@@ -30,6 +30,7 @@
 //! pipeline (optimizer `java-compat`).
 
 pub mod autorouter;
+pub mod escape;
 pub mod fanout;
 pub mod history;
 pub mod optimizer;

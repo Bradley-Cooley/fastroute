@@ -266,6 +266,17 @@ the contact problems above (connections "routed" without changing the unrouted c
 `scripts/bench.py --suite quick -j 3` checks 16 sensitive boards in about 5 minutes; the full
 set (`dac,kicad,pcbench:60` plus exported KiCad boards) is for releases.
 
+Every unrouted connection in the report also says whether it starts at a dense part
+(`escape`: a part with at least 16 SMD pins at a pitch of 0.65 mm or less, such as a QFN,
+QFP, TSSOP or BGA), with one end on a pin of the part (`at_pin`) or within 2 mm of its pads.
+`stats.unrouted_escape` counts them, `dense_parts` lists the parts, and `bench.py` shows the
+count as the `escape` column. `--suite dense` picks the 12 PCBench boards with the most dense
+parts (at most 150 parts each, none from the quick suite) by scanning the DSN files. Most
+failures start at such parts: on the quick suite 74 of 104 unrouted connections (54 at a
+pin), on the dense suite 77 of 87 (72 at a pin; 6 of 12 boards fully routed, 33 min with
+`-j 3`). This is the case for planning the escapes of dense parts together instead of one pin
+at a time.
+
 Not adopted: an automatic neck width (half the narrowest trace width) for boards without one.
 It routed some boards completely but left more unrouted on others (karabas-nano 4 → 15,
 pogo-pin 10 → 17), also when limited to insertion failures (Aria 24 → 32); after the contact
