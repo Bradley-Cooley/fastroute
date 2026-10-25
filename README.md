@@ -116,6 +116,7 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--router.min_trace_width_um=<w>` | Never neck traces down below this width |
 | `--multi-start=N` | Rerun the autorouter with N−1 shuffled orders in parallel if connections remain unrouted (default 4) |
 | `--multi-start-costs` | Adds multi-start variants that also scale the via costs (×0.5 / ×2) and rip-up costs (×0.5 / ×3); the stock variants still run, so the result is never worse |
+| `--escape-plan` | Adds multi-start variants whose fanout leaves pins of fine-pitch parts on their layer where their connection can stay there (planned for all pins together); the stock variants still run, so the result is never worse. `=only` uses the plan instead of the stock variants |
 | `--repair`, `--repair-time=SECONDS` | Region repair after routing: rip and re-route the copper along each unrouted connection in growing windows, keeping a result only if it is better (budget 120 s by default) |
 | `--no-enhancements` | Freerouting's behaviour without fastroute's routing/optimizer improvements (see [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md)) |
 | `--router.autorouter.max_threads=N` | Threads of the parallel autorouting pass (default: all cores; 1 = sequential pass) |
@@ -127,7 +128,7 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--router.autorouter.min_passes=N` | The stagnation rules do not stop the autorouter before N passes (for long runs bounded by `--max-time`) |
 | `--initial-session=FILE` | Start from the wiring of a session file (e.g. a checkpoint of an earlier run) and continue routing and optimizing it |
 | `--live[=PORT]` | Watch the routing live in the web browser (`http://127.0.0.1:7878` by default, opened automatically): traces and airlines as they change, pass progress, unrouted connections per pass, log, and a Stop button. Results are unaffected |
-| `--report=FILE` | Write a JSON summary: statistics, timings, every unrouted connection and clearance violation |
+| `--report=FILE` | Write a JSON summary: statistics, timings, every unrouted connection (and whether it starts at a fine-pitch part) and clearance violation |
 | `--diagnose` | With `--report`: route each unrouted connection alone on the loaded board, classifying it as congestion (other traces in the way) or blocked (geometry or rules) |
 | `-V`, `--version` | Print the version |
 | `-v` | Verbose progress |

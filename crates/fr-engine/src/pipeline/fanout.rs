@@ -77,7 +77,12 @@ fn compare_pins(order: &str, a: &FanoutPin, b: &FanoutPin) -> Ordering {
 }
 
 /// Java `new BatchFanout(board, settings, thread)`: the sorted components with SMD pins.
-fn sorted_components(board: &RoutingBoard, settings: &RouterSettings, skip_ignored_nets: bool) -> Vec<FanoutComponent> {
+fn sorted_components(
+    board: &RoutingBoard,
+    settings: &RouterSettings,
+    skip_ignored_nets: bool,
+    skip_pins: Option<&std::collections::BTreeSet<i32>>,
+) -> Vec<FanoutComponent> {
     let order = settings.fanout.pin_sorting_order.clone().unwrap_or_else(|| "outer_first".to_string());
     // fastroute: pins of net classes the autorouter ignores (router.autorouter.ignore_net_classes)
     // get no fanout either; Java fans them out, leaving stubs on nets that must not be routed.
@@ -88,7 +93,13 @@ fn sorted_components(board: &RoutingBoard, settings: &RouterSettings, skip_ignor
             })
     };
     let smd_pins_with_nets: Vec<ItemKey> =
-        board.get_smd_pins().into_iter().filter(|&p| board.item(p).net_count() > 0 && !ignored(p)).collect();
+        board
+            .get_smd_pins()
+            .into_iter()
+            .filter(|&p| board.item(p).net_count() > 0 && !ignored(p))
+            // fastroute escape planner: pins the plan keeps on their own layer
+            .filter(|&p| !skip_pins.is_some_and(|s| s.contains(&board.item(p).id().0)))
+            .collect();
     let mut result = Vec::new();
     for i in 1..=board.components.count() {
         let component_id = board.components.get(i).id;
@@ -162,9 +173,15 @@ fn sorted_components(board: &RoutingBoard, settings: &RouterSettings, skip_ignor
     result
 }
 
-/// Java `BatchFanout.fanoutBoard(board, settings, thread, listener)`.
-pub fn fanout_board(board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) -> FanoutRunSummary {
-    let components = sorted_components(board, settings, ctx.enhancements);
+/// Java `BatchFanout.fanoutBoard(board, settings, thread, listener)`; fastroute: `skip_pins`
+/// (item ids) are not fanned out.
+pub fn fanout_board(
+    board: &mut RoutingBoard,
+    settings: &RouterSettings,
+    ctx: &PipelineContext,
+    skip_pins: Option<&std::collections::BTreeSet<i32>>,
+) -> FanoutRunSummary {
+    let components = sorted_components(board, settings, ctx.enhancements, skip_pins);
     let total_smd_pin_count: i32 = components.iter().map(|c| c.smd_pin_count).sum();
     let start = Instant::now();
     let deadline = if ctx.wall_clock_limits {

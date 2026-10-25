@@ -72,7 +72,11 @@ impl Connection {
                     }
                     break;
                 }
-                connection_items.insert(board.item(current_item).id(), current_item);
+                // fastroute: around a closed ring of routable items without a fork the Java
+                // loop never ends; stop where the walk has been before
+                if !connection_items.insert(board.item(current_item).id(), current_item) {
+                    break;
+                }
                 let current_item_contacts = board.normal_contacts(current_item);
                 // filter the contacts at the previous contact point, because we were already
                 // there. If then there is not exactly 1 new contact left, there is a stub or a

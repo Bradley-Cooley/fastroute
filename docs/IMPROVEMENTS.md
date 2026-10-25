@@ -78,6 +78,37 @@ With the flag alone, 4 boards get better and none get worse: CM5 7 → 6, SunLea
 mdbwerk 2 → 1, mightyduino 1 → 0. With repair added, 8 get better and none get worse.
 Vias go up by about 11% because the cheap-via variants win more often.
 
+## Escape plan for fine-pitch parts (`--escape-plan`, new)
+
+The fanout stage gives every SMD pin a via, one pin at a time. At a fine-pitch part (see
+the `escape` report field below) those vias fill the space around the pads, also for pins
+whose connection could stay on the pad's layer. `--escape-plan` plans the pins of all dense
+parts together before routing: a signal pin whose nearest pin of the same net on another
+part is reachable on the pad's layer keeps to that layer (the fanout skips it), unless its
+airline crosses the airline of another such pin on the layer; of crossing pins, the one with
+the most crossings gets its via first, until no two airlines on a layer cross. Pins of plane
+nets, and pins without such a target, are fanned out as before.
+
+The plan runs as `--multi-start` more multi-start variants (the first run's pass order and
+the stock orders, with the plan), next to the stock variants, so the stock result is always
+a candidate and no board gets worse. `--escape-plan=only` uses the plan in the first run and
+the stock variants instead, to measure it on its own.
+
+Quick suite (28 boards, `-j 3`, default `--multi-start=4`), stock vs `--escape-plan`:
+unrouted 191 → 184, fully routed 10 → 12, total time 3593 → 5797 s. Better: bm05 6 → 5,
+StickHub 2 → 1, Hardware_Playground 1 → 0, mightyduino 1 → 0, Smart-Watch 37 → 34; none
+worse. As a control, `--multi-start=8` (the same number of variants, all stock) left all 28 boards unchanged, so the gain comes from the
+plan, not from more restarts. The gain is on a few boards: on others the
+plan's variants route about as well as the stock ones, and sometimes worse (they then lose
+to the stock variants).
+
+A connection from a dense part to a pin on the other side of the board needs one via, but
+the fanout gives both ends one. The plan keeps such a target (an SMD pin that is not on a
+dense part) on its layer and leaves the via at the dense part. Quick suite, against the plan
+without this: 184 → 182 unrouted (Smart-Watch 34 → 32), nothing else changes. Putting the
+via at the target instead, and keeping the dense pin on its layer, routed worse in a first
+test (Smart-Watch 37 → 47 in the first run), so it was not adopted.
+
 ## Region repair (`--repair`, new)
 
 The autorouter routes one connection at a time. When the last connections fail, routing
@@ -265,6 +296,16 @@ the way; `blocked`: the geometry or the rules are), and on the final board as au
 the contact problems above (connections "routed" without changing the unrouted count).
 `scripts/bench.py --suite quick -j 3` checks 16 sensitive boards in about 5 minutes; the full
 set (`dac,kicad,pcbench:60` plus exported KiCad boards) is for releases.
+
+Every unrouted connection in the report also says whether it starts at a dense part
+(`escape`: a part with at least 16 SMD pins at a pitch of 0.65 mm or less, such as a QFN,
+QFP, TSSOP or BGA), with one end on a pin of the part (`at_pin`) or within 2 mm of its pads.
+`stats.unrouted_escape` counts them, `dense_parts` lists the parts, and `bench.py` shows the
+count as the `escape` column. Most failures start at such parts: on the 16 boards the quick
+suite had, 74 of 104 unrouted connections (54 at a pin). The quick suite now also holds the 12
+PCBench boards with the most dense parts (at most 150 parts each); on those, 77 of 87 (72 at a
+pin; 6 of 12 fully routed). This is the case for planning the escapes of dense parts together
+instead of one pin at a time.
 
 Not adopted: an automatic neck width (half the narrowest trace width) for boards without one.
 It routed some boards completely but left more unrouted on others (karabas-nano 4 → 15,

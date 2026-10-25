@@ -17,8 +17,10 @@ Suites:
                `route_cli.py --export-only --work-dir DIR` (board.dsn + args.txt): the board
                exactly as the KiCad plugin routes it
   FILE.dsn     a single board
-  quick        16 boards that react to routing changes (unrouted connections or recent
-               changes, each under ~100 s); run with -j 3, see QUICK_ARGS
+  quick        28 boards that react to routing changes (unrouted connections or recent
+               changes, and boards with many fine-pitch parts); run with -j 3, see QUICK_ARGS
+
+The `escape` column counts the unrouted connections with an end at a fine-pitch part.
 
 Default: dac,kicad (the 20 benchmark boards of docs/PERFORMANCE.md).
 """
@@ -39,6 +41,7 @@ COLUMNS = [
     ("time_s", "{:>8}"),
     ("rss_mb", "{:>7}"),
     ("unrouted", "{:>8}"),
+    ("escape", "{:>6}"),
     ("violations", "{:>10}"),
     ("vias", "{:>6}"),
     ("length_mm", "{:>10}"),
@@ -58,11 +61,18 @@ QUICK = [
     ("pcbench", "Inkjet_PiezoDriver"), ("pcbench", "LED_port-status"), ("pcbench", "S1G-Mod_S1G_Mod_868"),
     ("pcbench", "SunLeaf_SunLeaf_V2"), ("pcbench", "USB-TypeC-breakout-board"), ("pcbench", "kitspace_PSLab"),
     ("pcbench", "mdbwerk_mdbwerk"), ("pcbench", "mightyduino_mightyduino"),
+    # the 12 PCBench boards with the most fine-pitch parts (16+ SMD pins at a pitch of 0.65 mm
+    # or less, as fastroute's pipeline::escape) among those with at most 150 parts
+    ("pcbench", "timecircuits-hardware_BTTF-TimeCircuits"), ("pcbench", "FMCW_RADAR_Radar RF"),
+    ("pcbench", "OpenVNAVI_driver unit"), ("pcbench", "kitspace_Unifying"), ("pcbench", "memsarray_mems_array"),
+    ("pcbench", "pcb_HDMI2RGB_HDMI2RGB"), ("pcbench", "Hardware_Playground_E3_Pcb_rev0.3"),
+    ("pcbench", "LogicBoxen_LogicBoxen"), ("pcbench", "Smart-Watch_SmartWatch"),
+    ("pcbench", "divergence_meter_dm_nixiebrd"), ("pcbench", "motor-3xdrv8833-hw_ver1"),
+    ("pcbench", "96boards-robomezzi_96boards-robomezzi"),
 ]
 # the quick suite runs several boards at once: fewer threads per run (results depend on the
 # thread count, so quick runs are only comparable with quick runs)
 QUICK_ARGS = ["--router.autorouter.max_threads=3", "--router.optimizer.max_threads=3"]
-
 
 class Board:
     def __init__(self, name, dsn, args=()):
@@ -138,6 +148,7 @@ def run_board(board, binary, out, extra, diagnose, max_time):
         s = r["stats"]
         row.update(
             unrouted=s["unrouted"],
+            escape=s.get("unrouted_escape", ""),
             violations=s["violations"],
             vias=s["vias"],
             length_mm=f"{s['trace_length_mm']:.0f}" if s["trace_length_mm"] is not None else "",
@@ -170,7 +181,7 @@ def num(v):
 
 def totals(rows):
     t = {"board": f"TOTAL ({len(rows)} boards)"}
-    for c in ("time_s", "unrouted", "violations", "vias", "length_mm"):
+    for c in ("time_s", "unrouted", "escape", "violations", "vias", "length_mm"):
         vals = [num(r.get(c)) for r in rows]
         vals = [v for v in vals if v is not None]
         t[c] = f"{sum(vals):.0f}" if c != "time_s" else f"{sum(vals):.1f}"
