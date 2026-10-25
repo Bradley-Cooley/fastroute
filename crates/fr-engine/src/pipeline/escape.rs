@@ -11,6 +11,12 @@
 //! another such pin; of crossing pins, those with the most crossings get their via, until no
 //! two airlines on a layer cross. Pins of plane nets and pins without such a target are fanned
 //! out as before.
+//!
+//! A connection whose target is on another layer only needs one via, but the fanout gives
+//! both ends one. When the target is not a pin of a dense part, the plan keeps the target on
+//! its layer (the fanout skips it) and leaves the via at the dense part, where the connection
+//! can then use either layer. (Moving the via to the target instead, and keeping the dense
+//! pin on its layer, routed worse: Smart-Watch 37 → 47 unrouted in the first run.)
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -122,6 +128,11 @@ pub struct EscapePlan {
     pub planned: usize,
     /// Pins that would stay on their layer but got a via because their airlines crossed.
     pub via_for_crossings: usize,
+    /// Planned pins whose target is on another layer only (their target keeps its layer
+    /// unless it is a pin of a dense part) ...
+    pub other_layer: usize,
+    /// ... of these, the ones whose target is a pin of a dense part.
+    pub other_layer_dense: usize,
 }
 
 /// One pin of a dense part with a target on the same layer.
@@ -156,6 +167,7 @@ pub fn plan_escapes(board: &RoutingBoard) -> EscapePlan {
         }
     }
     let mut candidates = Vec::new();
+    let mut targets_kept: BTreeSet<i32> = BTreeSet::new();
     for part in &parts {
         for &p in &part.pins {
             let it = board.item(p);
@@ -178,6 +190,14 @@ pub fn plan_escapes(board: &RoutingBoard) -> EscapePlan {
             let t = board.item(target);
             if t.first_layer(board) <= layer && layer <= t.last_layer(board) {
                 candidates.push(Candidate { id: it.id().0, layer, from, to, target: t.id().0 });
+            } else {
+                plan.other_layer += 1;
+                // one via for the connection, at the dense part: the target keeps its layer
+                if parts.iter().any(|q| q.pins.contains(&target)) {
+                    plan.other_layer_dense += 1;
+                } else if t.first_layer(board) == t.last_layer(board) {
+                    targets_kept.insert(t.id().0);
+                }
             }
         }
     }
@@ -208,6 +228,7 @@ pub fn plan_escapes(board: &RoutingBoard) -> EscapePlan {
         }
     }
     plan.keep_on_layer = (0..n).filter(|&i| !via[i]).map(|i| candidates[i].id).collect();
+    plan.keep_on_layer.extend(targets_kept);
     plan
 }
 

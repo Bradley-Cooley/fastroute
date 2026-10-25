@@ -102,6 +102,13 @@ plan, not from more restarts. The gain is on a few boards: on others the
 plan's variants route about as well as the stock ones, and sometimes worse (they then lose
 to the stock variants).
 
+A connection from a dense part to a pin on the other side of the board needs one via, but
+the fanout gives both ends one. The plan keeps such a target (an SMD pin that is not on a
+dense part) on its layer and leaves the via at the dense part. Quick suite, against the plan
+without this: 184 → 182 unrouted (Smart-Watch 34 → 32), nothing else changes. Putting the
+via at the target instead, and keeping the dense pin on its layer, routed worse in a first
+test (Smart-Watch 37 → 47 in the first run), so it was not adopted.
+
 ## Region repair (`--repair`, new)
 
 The autorouter routes one connection at a time. When the last connections fail, routing

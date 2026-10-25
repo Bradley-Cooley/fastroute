@@ -232,12 +232,14 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     let escape_plan = (ctx.enhancements && ctx.escape != EscapeMode::Off).then(|| {
         let plan = escape::plan_escapes(board);
         log::info!(
-            "Escape plan: {} dense part{}, {} pins with a target on another part, {} kept on their layer, {} given a via for crossing airlines.",
+            "Escape plan: {} dense part{}, {} pins with a target on another part, {} kept on their layer, {} given a via for crossing airlines, {} with a target on another layer only ({} on a dense part).",
             plan.dense_parts,
             if plan.dense_parts == 1 { "" } else { "s" },
             plan.planned,
             plan.keep_on_layer.len(),
-            plan.via_for_crossings
+            plan.via_for_crossings,
+            plan.other_layer,
+            plan.other_layer_dense
         );
         std::sync::Arc::new(plan.keep_on_layer)
     });
