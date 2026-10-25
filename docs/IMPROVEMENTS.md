@@ -109,6 +109,32 @@ without this: 184 → 182 unrouted (Smart-Watch 34 → 32), nothing else changes
 via at the target instead, and keeping the dense pin on its layer, routed worse in a first
 test (Smart-Watch 37 → 47 in the first run), so it was not adopted.
 
+On boards without a dense part the plan is empty: of its variants only the one with the
+first run's pass order runs (it routes with sequential passes, so it differs from the first
+run); the shuffled orders would repeat the stock variants exactly.
+
+## Stopping losing variants (`--prune-variants`, new)
+
+The extra variants (cost portfolio, escape plan) are compared pass by pass with the first
+run, which finished before they started, so the decision does not depend on thread timing:
+from pass 3 on, a variant whose fewest unrouted connections so far exceed the first run's
+fewest by the same pass by more than 50 % (at least 3) is stopped. Its board still competes.
+The stock variants always run to the end, so the result is never worse than stock. Each
+variant's unrouted count after every pass is logged (`Multi-start variant ...: unrouted
+after each pass [...]`), so other margins can be checked against a run offline.
+
+The margin comes from such a run of the quick suite: tighter margins (10-30 %) would have
+stopped the variant that won on SunLeaf (it was far behind for its first passes) or
+mightyduino. With 50 %, about a sixth of the variants' passes are skipped and no board
+changes. Quick suite, `--escape-plan --multi-start-costs --repair-time=120` with and
+without `--prune-variants`: unrouted 172 both (stock 191), total time 10340 → 9193 s; the
+largest savings are on Aria (832 → 531 s), SunLeaf (1359 → 1015 s), PSLab and mightyduino.
+
+Tried and dropped: a failure-driven re-plan, `--multi-start` more escape variants with a
+plan for only the dense parts the first run left connections unrouted at. On the quick suite
+the re-plan differed from the full plan on 5 boards and won on none (172 unrouted either
+way, +4 % time).
+
 ## Region repair (`--repair`, new)
 
 The autorouter routes one connection at a time. When the last connections fail, routing

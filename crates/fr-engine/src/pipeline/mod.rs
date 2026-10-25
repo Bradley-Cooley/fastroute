@@ -70,6 +70,9 @@ pub struct PipelineContext {
     pub cost_portfolio: bool,
     /// fastroute escape planner (`--escape-plan`): see [`EscapeMode`].
     pub escape: EscapeMode,
+    /// fastroute (`--prune-variants`): stop the extra multi-start variants (cost portfolio,
+    /// escape plan) that fall clearly behind the first run (see [`autorouter::PruneRule`]).
+    pub prune_variants: bool,
     /// fastroute region repair after the routing stage (`--repair`); `None` = off.
     pub repair: Option<repair::RepairOptions>,
     /// Called with the current board whenever a stage reached a new best state (see
@@ -131,6 +134,7 @@ impl std::fmt::Debug for PipelineContext {
             .field("multi_start", &self.multi_start)
             .field("cost_portfolio", &self.cost_portfolio)
             .field("escape", &self.escape)
+            .field("prune_variants", &self.prune_variants)
             .field("repair", &self.repair)
             .field("checkpoint", &self.checkpoint.is_some())
             .field("observer", &self.observer.is_some())
@@ -164,6 +168,7 @@ impl Default for PipelineContext {
             multi_start: 1,
             cost_portfolio: false,
             escape: EscapeMode::Off,
+            prune_variants: false,
             repair: None,
             checkpoint: None,
             observer: None,
@@ -267,7 +272,8 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
                 );
             } else {
                 ctx.observe(board, &LiveEvent::Stage("multi-start"));
-                multi_start(board, &start, settings, ctx, escape_plan.as_ref());
+                let history: Vec<i32> = autorouter.pass_history.iter().map(|h| h.0).collect();
+                multi_start(board, &start, settings, ctx, escape_plan.as_ref(), history);
             }
         }
     } else if settings.is_fanout_enabled() && !ctx.stop.is_stop_autorouter_requested() {
@@ -320,6 +326,7 @@ fn multi_start(
     settings: &RouterSettings,
     ctx: &PipelineContext,
     escape_plan: Option<&std::sync::Arc<std::collections::BTreeSet<i32>>>,
+    first_history: Vec<i32>,
 ) {
     use rayon::prelude::*;
     let mut stats = StatsCache::new();
@@ -333,12 +340,21 @@ fn multi_start(
         /// first-pass order (`None`: the first run's)
         seed: Option<usize>,
         settings: RouterSettings,
-        escape: bool,
+        /// the pins the fanout leaves alone (an escape plan)
+        skip: Option<std::sync::Arc<std::collections::BTreeSet<i32>>>,
+        /// a stock variant (never pruned)
+        stock: bool,
     }
     let n = ctx.multi_start;
-    let only = ctx.escape == EscapeMode::Only && escape_plan.is_some();
+    let only = ctx.escape == EscapeMode::Only && escape_plan.is_some_and(|p| !p.is_empty());
     let mut specs: Vec<Variant> = (1..n)
-        .map(|v| Variant { label: if only { " (escape plan)".into() } else { String::new() }, seed: Some(v), settings: settings.clone(), escape: only })
+        .map(|v| Variant {
+            label: if only { " (escape plan)".into() } else { String::new() },
+            seed: Some(v),
+            settings: settings.clone(),
+            skip: if only { escape_plan.cloned() } else { None },
+            stock: true,
+        })
         .collect();
     // The cost portfolio and the escape planner add their variants after the stock ones
     // instead of replacing them, so the stock result is always among the candidates and the
@@ -350,17 +366,33 @@ fn multi_start(
                 label: format!(" (order {k}, via costs x{via}, rip-up costs x{ripup})"),
                 seed: Some(k),
                 settings: portfolio_settings(settings, k),
-                escape: false,
+                skip: None,
+                stock: false,
             });
         }
     }
     if ctx.escape == EscapeMode::Variants && escape_plan.is_some() {
-        for k in 0..n {
+        // with an empty plan (no dense parts) the shuffled orders would repeat the stock
+        // variants; only the first-run order (routed with sequential passes) differs
+        let orders = if escape_plan.is_some_and(|p| p.is_empty()) { 1 } else { n };
+        for k in 0..orders {
             let order = if k == 0 { "first-run order".to_string() } else { format!("order {k}") };
-            specs.push(Variant { label: format!(" (escape plan, {order})"), seed: (k > 0).then_some(k), settings: settings.clone(), escape: true });
+            specs.push(Variant {
+                label: format!(" (escape plan, {order})"),
+                seed: (k > 0).then_some(k),
+                settings: settings.clone(),
+                skip: escape_plan.cloned(),
+                stock: false,
+            });
         }
     }
-    let variants: Vec<(usize, RoutingBoard, stats::Score)> = specs
+    let prune = ctx.prune_variants.then(|| autorouter::PruneRule {
+        reference: std::sync::Arc::new(first_history),
+        min_pass: PRUNE_MIN_PASS,
+        margin_pct: PRUNE_MARGIN_PCT,
+        margin_min: PRUNE_MARGIN_MIN,
+    });
+    let variants: Vec<(usize, RoutingBoard, stats::Score, Vec<(i32, f64)>, Option<i32>)> = specs
         .par_iter()
         .enumerate()
         .map(|(i, spec)| {
@@ -374,6 +406,7 @@ fn multi_start(
                 multi_start: 1,
                 cost_portfolio: false,
                 escape: EscapeMode::Off,
+                prune_variants: false,
                 repair: None,
                 checkpoint: ctx.checkpoint.clone(),
                 // the variants run in parallel; the viewer shows the first run
@@ -381,25 +414,29 @@ fn multi_start(
             };
             let mut router = BatchAutorouter::for_job(&b, &spec.settings);
             router.order_seed = spec.seed.map(|s| 0x5eed_0000 + s as i64);
-            if spec.escape {
-                router.fanout_skip_pins = escape_plan.cloned();
+            router.fanout_skip_pins = spec.skip.clone();
+            if !spec.stock {
+                router.prune = prune.clone();
             }
             router.pass_threads = 1; // the variants already run in parallel
             router.run_batch_loop(&mut b, &spec.settings, &variant_ctx);
             b.finish_autoroute();
             let s = StatsCache::new().score(&b, settings);
-            (i + 1, b, s)
+            (i + 1, b, s, std::mem::take(&mut router.pass_history), router.pruned_at)
         })
         .collect();
     let key = |s: &stats::Score| (s.incomplete_count, s.clearance_violation_count, std::cmp::Reverse(ordered_f32(s.router_score)));
     let mut best: Option<(usize, RoutingBoard, stats::Score)> = None;
-    for (v, b, s) in variants {
+    for (v, b, s, h, pruned_at) in variants {
         log::info!(
-            "Multi-start variant {v}{}: {} unrouted, {} violations, router score {:.2}.",
+            "Multi-start variant {v}{}: {} unrouted, {} violations, router score {:.2}{}; unrouted after each pass {:?} ({:.0} s).",
             specs[v - 1].label,
             s.incomplete_count,
             s.clearance_violation_count,
-            s.router_score as f64
+            s.router_score as f64,
+            pruned_at.map(|p| format!(" (stopped after pass {p})")).unwrap_or_default(),
+            h.iter().map(|x| x.0).collect::<Vec<_>>(),
+            h.iter().map(|x| x.1).sum::<f64>()
         );
         let better = match &best {
             None => key(&s) < key(&first),
@@ -421,6 +458,11 @@ fn multi_start(
         *board = b;
     }
 }
+
+/// [`autorouter::PruneRule`] of `--prune-variants`.
+const PRUNE_MIN_PASS: usize = 3;
+const PRUNE_MARGIN_PCT: i32 = 50;
+const PRUNE_MARGIN_MIN: i32 = 3;
 
 /// Total order on finite scores (NaN sorts last).
 fn ordered_f32(x: f32) -> i64 {
