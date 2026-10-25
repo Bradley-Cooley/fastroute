@@ -270,12 +270,11 @@ Every unrouted connection in the report also says whether it starts at a dense p
 (`escape`: a part with at least 16 SMD pins at a pitch of 0.65 mm or less, such as a QFN,
 QFP, TSSOP or BGA), with one end on a pin of the part (`at_pin`) or within 2 mm of its pads.
 `stats.unrouted_escape` counts them, `dense_parts` lists the parts, and `bench.py` shows the
-count as the `escape` column. `--suite dense` picks the 12 PCBench boards with the most dense
-parts (at most 150 parts each, none from the quick suite) by scanning the DSN files. Most
-failures start at such parts: on the quick suite 74 of 104 unrouted connections (54 at a
-pin), on the dense suite 77 of 87 (72 at a pin; 6 of 12 boards fully routed, 33 min with
-`-j 3`). This is the case for planning the escapes of dense parts together instead of one pin
-at a time.
+count as the `escape` column. Most failures start at such parts: on the 16 boards the quick
+suite had, 74 of 104 unrouted connections (54 at a pin). The quick suite now also holds the 12
+PCBench boards with the most dense parts (at most 150 parts each); on those, 77 of 87 (72 at a
+pin; 6 of 12 fully routed). This is the case for planning the escapes of dense parts together
+instead of one pin at a time.
 
 Not adopted: an automatic neck width (half the narrowest trace width) for boards without one.
 It routed some boards completely but left more unrouted on others (karabas-nano 4 → 15,
