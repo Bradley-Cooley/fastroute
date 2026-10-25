@@ -51,6 +51,33 @@ here. The engine-side ones are active unless `--parity` is given
 | Fixed vias without a trace are zone stitching vias | A locked via that no trace touches (GND zone stitching, thermal vias; KiCad exports them as `(type fix)`) is an unrouted item of its net to Freerouting, which routes a trace to every one of them: a board with 184 GND stitching vias got 211 extra GND traces (413 → 791 mm). The zone that joins these vias is not on the board (the plugin strips the planes), so the stitching vias of a net are now treated as connected to each other: a pad routed to any one of them is connected to the zone and to every other pad that reached one. Same board: GND traces 120 / 390 mm without the vias, 104 / 228 mm with them, 0 unrouted, KiCad DRC clean. `--parity` keeps Freerouting's behaviour. |
 | No endless walk around a ring of traces | `getConnectionItems` follows contacts until a fork; around a closed ring without a fork the Java loop never ends (it hung a run while the contact rules above were developed). The walk stops where it started. |
 
+## Cost portfolio for multi-start (`--multi-start-costs`, new)
+
+Multi-start reruns the routing stage with shuffled first-pass orders, but every variant
+uses the same costs, so variants tend to fail in the same places. `--multi-start-costs`
+adds `N - 1` more variants (`N` = `--multi-start`). Cost variant `k` uses the pass order of
+stock variant `k` and scales the via costs (and plane via costs) and the start rip-up
+costs by `(via, rip-up)` = (0.5, 1), (2, 1), (1, 3), (0.5, 3), (2, 0.5), (1, 0.5), taken
+at `(k - 1) % 6`. The stock variants still run, and on a tie they win, so the best board
+is never worse than without the flag (each variant is deterministic). Variants are
+compared with the job's own settings, and the first run is unchanged.
+
+An earlier version replaced the stock variants with the cost variants. That lost
+kitspace_PSLab (0 → 1 unrouted), because stock variant 3's order was the one that routed
+it fully.
+
+Quick suite (16 boards, `-j 3`, default `--multi-start=4`), against stock:
+
+| | unrouted | fully routed | vias | time |
+| --- | --- | --- | --- | --- |
+| stock | 104 | 4 | 638 | 1929 s |
+| `--multi-start-costs` | 98 | 5 | 710 | 2605 s |
+| `--multi-start-costs --repair-time=120` | 88 | 6 | 713 | 3670 s |
+
+With the flag alone, 4 boards get better and none get worse: CM5 7 → 6, SunLeaf 29 → 26,
+mdbwerk 2 → 1, mightyduino 1 → 0. With repair added, 8 get better and none get worse.
+Vias go up by about 11% because the cheap-via variants win more often.
+
 ## Region repair (`--repair`, new)
 
 The autorouter routes one connection at a time. When the last connections fail, routing
