@@ -388,6 +388,8 @@ pub struct ConnectionRouterParams {
     /// fastroute: a connection may end in a via into the net's plane (see
     /// [`AutorouteControl::connect_to_planes`]).
     pub connect_to_planes: bool,
+    /// fastroute failure-only history (see [`super::history`]).
+    pub history: Option<std::sync::Arc<super::history::FailureHistory>>,
 }
 
 /// The result of [`route_connection`].
@@ -454,6 +456,7 @@ fn route_connection_impl(
     ctrl.ripup_costs = params.start_ripup_costs.wrapping_mul(ripup_pass_no);
     ctrl.remove_unconnected_vias = params.remove_unconnected_vias;
     ctrl.connect_to_planes = params.connect_to_planes;
+    ctrl.history = params.history.clone();
     let unconnected_set = board.unconnected_set(item, route_net_no);
     if unconnected_set.is_empty() {
         return ConnectionRouteOutcome { result: AutorouteAttemptResult::new(AutorouteAttemptState::NoUnconnectedNets), max_item_id_before_route: None };

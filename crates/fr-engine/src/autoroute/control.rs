@@ -81,6 +81,8 @@ pub struct AutorouteControl {
     pub remove_unconnected_vias: bool,
     /// fastroute: accept connections that end in a via into the net's plane on a power layer.
     pub connect_to_planes: bool,
+    /// fastroute failure-only history (see [`super::history`]).
+    pub history: Option<std::sync::Arc<super::history::FailureHistory>>,
     /// The possible (partial) vias (Java `viaRule`, a copy of the net class rule).
     pub via_rule: ViaRule,
     pub net_number: NetNo,
@@ -174,6 +176,7 @@ impl AutorouteControl {
             fanout_start_pin_layer: -1,
             remove_unconnected_vias: true,
             connect_to_planes: false,
+            history: None,
             via_rule: ViaRule::empty(),
             net_number: 0,
             via_clearance_class: 0,

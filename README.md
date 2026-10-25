@@ -117,6 +117,7 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--multi-start=N` | Rerun the autorouter with N−1 shuffled orders in parallel if connections remain unrouted (default 4) |
 | `--multi-start-costs` | Adds multi-start variants that also scale the via costs (×0.5 / ×2) and rip-up costs (×0.5 / ×3); the stock variants still run, so the result is never worse |
 | `--escape-plan` | Adds multi-start variants whose fanout leaves pins of fine-pitch parts on their layer where their connection can stay there (planned for all pins together); the stock variants still run, so the result is never worse. `=only` uses the plan instead of the stock variants |
+| `--failure-history` | Adds multi-start variants that route with a cost history on the corridors of connections that keep failing (other nets avoid them, the failing net rips there more easily); the stock variants still run, so the result is never worse. `=only` uses it instead of the stock variants |
 | `--prune-variants` | Stops the extra multi-start variants (`--multi-start-costs`, `--escape-plan`) once they fall clearly behind the first run; the stock variants always finish, so the result is never worse than stock |
 | `--repair`, `--repair-time=SECONDS` | Region repair after routing: rip and re-route the copper along each unrouted connection in growing windows, keeping a result only if it is better (budget 120 s by default) |
 | `--no-enhancements` | Freerouting's behaviour without fastroute's routing/optimizer improvements (see [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md)) |
