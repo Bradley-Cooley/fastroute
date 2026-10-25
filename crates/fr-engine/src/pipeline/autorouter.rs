@@ -84,6 +84,9 @@ pub struct BatchAutorouter {
     /// fastroute repair: items of these nets are routed first in the first pass (after the
     /// plane items), so the connection a repair window was opened for gets the freed space.
     pub priority_nets: Option<BTreeSet<NetNo>>,
+    /// fastroute escape planner: SMD pins (by item id) the fanout stage leaves alone, because
+    /// the plan routes them on their own layer (see [`super::escape::plan_escapes`]).
+    pub fanout_skip_pins: Option<std::sync::Arc<BTreeSet<i32>>>,
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
@@ -201,6 +204,7 @@ impl BatchAutorouter {
             pass_pool: None,
             order_seed: None,
             priority_nets: None,
+            fanout_skip_pins: None,
             fanout_timed_out: false,
             initial_unrouted_count: 0,
             pristine: None,
@@ -941,7 +945,7 @@ impl BatchAutorouter {
             } else {
                 let t = Instant::now();
                 ctx.observe(board, &super::LiveEvent::Stage("fanout"));
-                let summary = fanout::fanout_board(board, settings, ctx);
+                let summary = fanout::fanout_board(board, settings, ctx, self.fanout_skip_pins.as_deref());
                 self.fanout_timed_out = summary.timed_out;
                 log::info!(
                     "Fanout stage {} {} passes, completed in {:.2} seconds.",

@@ -78,6 +78,37 @@ With the flag alone, 4 boards get better and none get worse: CM5 7 → 6, SunLea
 mdbwerk 2 → 1, mightyduino 1 → 0. With repair added, 8 get better and none get worse.
 Vias go up by about 11% because the cheap-via variants win more often.
 
+## Escape plan for fine-pitch parts (`--escape-plan`, new)
+
+The fanout stage gives every SMD pin a via, one pin at a time. At a fine-pitch part (see
+the `escape` report field below) those vias fill the space around the pads, also for pins
+whose connection could stay on the pad's layer. `--escape-plan` plans the pins of all dense
+parts together before routing: a signal pin whose nearest pin of the same net on another
+part is reachable on the pad's layer keeps to that layer (the fanout skips it), unless its
+airline crosses the airline of another such pin on the layer; of crossing pins, the one with
+the most crossings gets its via first, until no two airlines on a layer cross. Pins of plane
+nets, and pins without such a target, are fanned out as before.
+
+The plan runs as `--multi-start` more multi-start variants (the first run's pass order and
+the stock orders, with the plan), next to the stock variants, so the stock result is always
+a candidate and no board gets worse. `--escape-plan=only` uses the plan in the first run and
+the stock variants instead, to measure it on its own.
+
+Quick suite (28 boards, `-j 3`, default `--multi-start=4`), stock vs `--escape-plan`:
+unrouted 191 → 184, fully routed 10 → 12, total time 3593 → 5797 s. Better: bm05 6 → 5,
+StickHub 2 → 1, Hardware_Playground 1 → 0, mightyduino 1 → 0, Smart-Watch 37 → 34; none
+worse. As a control, `--multi-start=8` (the same number of variants, all stock) left all 28 boards unchanged, so the gain comes from the
+plan, not from more restarts. The gain is on a few boards: on others the
+plan's variants route about as well as the stock ones, and sometimes worse (they then lose
+to the stock variants).
+
+A connection from a dense part to a pin on the other side of the board needs one via, but
+the fanout gives both ends one. The plan keeps such a target (an SMD pin that is not on a
+dense part) on its layer and leaves the via at the dense part. Quick suite, against the plan
+without this: 184 → 182 unrouted (Smart-Watch 34 → 32), nothing else changes. Putting the
+via at the target instead, and keeping the dense pin on its layer, routed worse in a first
+test (Smart-Watch 37 → 47 in the first run), so it was not adopted.
+
 ## Region repair (`--repair`, new)
 
 The autorouter routes one connection at a time. When the last connections fail, routing

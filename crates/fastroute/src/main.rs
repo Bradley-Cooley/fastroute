@@ -46,6 +46,7 @@ struct Args {
     multi_start: usize,
     repair: Option<f64>,
     cost_portfolio: bool,
+    escape: pipeline::EscapeMode,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -72,6 +73,7 @@ fn parse_args() -> Result<Args, String> {
         multi_start: 4,
         repair: None,
         cost_portfolio: false,
+        escape: pipeline::EscapeMode::Off,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -122,6 +124,16 @@ fn parse_args() -> Result<Args, String> {
             }
             "--multi-start-costs" => {
                 args.cost_portfolio = true;
+                i += 1;
+                continue;
+            }
+            "--escape-plan" => {
+                args.escape = pipeline::EscapeMode::Variants;
+                i += 1;
+                continue;
+            }
+            "--escape-plan=only" => {
+                args.escape = pipeline::EscapeMode::Only;
                 i += 1;
                 continue;
             }
@@ -264,6 +276,10 @@ options:
                            longer than 10 minutes)
   --multi-start-costs      add N-1 multi-start variants that also scale the via and
                            rip-up costs (x0.5 to x3); the stock variants still run
+  --escape-plan            add N multi-start variants whose fanout leaves the pins of
+                           fine-pitch parts on their layer where their connection can stay
+                           there (the stock variants still run); =only: the first run and
+                           the stock variants use the plan instead
   --repair                 after routing, rip and re-route the copper in growing windows
                            around each unrouted connection (variants in parallel, kept
                            only if better); time budget 120 s
@@ -557,6 +573,7 @@ fn run() -> Result<(), String> {
         enhancements: !args.parity && !args.no_enhancements,
         multi_start: args.multi_start,
         cost_portfolio: args.cost_portfolio && !args.parity && !args.no_enhancements,
+        escape: if args.parity || args.no_enhancements { pipeline::EscapeMode::Off } else { args.escape },
         repair: (!args.parity && !args.no_enhancements)
             .then_some(args.repair)
             .flatten()
