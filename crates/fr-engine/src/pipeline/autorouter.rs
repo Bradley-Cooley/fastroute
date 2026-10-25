@@ -53,6 +53,40 @@ const PARALLEL_RETRIES: u8 = 2;
 /// fastroute: connections in flight per thread in the parallel pass.
 const PARALLEL_WINDOW_PER_THREAD: usize = 2;
 
+/// fastroute multi-start: when an extra variant (cost portfolio, escape plan) is stopped
+/// early. The variant is compared pass by pass with the first routing run, which finished
+/// before the variants started, so the decision does not depend on thread timing: from pass
+/// [`Self::min_pass`] on, the variant is stopped if its fewest unrouted connections so far
+/// exceed the first run's fewest unrouted connections by the same pass (or in total, if the
+/// first run stopped earlier) by more than the margin. A stopped variant still competes with
+/// the board it has; the stock variants are never stopped, so the result can only get worse
+/// than without pruning if a stopped variant would have won.
+#[derive(Clone, Debug)]
+pub struct PruneRule {
+    /// The first run's unrouted connections after each pass.
+    pub reference: std::sync::Arc<Vec<i32>>,
+    pub min_pass: usize,
+    /// The margin: this many percent of the reference value, at least `margin_min`.
+    pub margin_pct: i32,
+    pub margin_min: i32,
+}
+
+impl PruneRule {
+    /// Why the run with these `history` (unrouted, seconds) entries should stop, if it should.
+    pub fn check(&self, history: &[(i32, f64)]) -> Option<String> {
+        let p = history.len();
+        if p < self.min_pass || self.reference.is_empty() {
+            return None;
+        }
+        let ours = history.iter().map(|h| h.0).min()?;
+        let theirs = *self.reference[..p.min(self.reference.len())].iter().min()?;
+        let margin = (theirs * self.margin_pct / 100).max(self.margin_min);
+        (ours > theirs + margin).then(|| {
+            format!("{ours} unrouted at best, the first run had {theirs} by this pass (margin {margin}); a variant this far behind is not expected to win.")
+        })
+    }
+}
+
 /// Java `BatchAutorouter` (with the state of its `AutoroutePassRunner`).
 pub struct BatchAutorouter {
     pub remove_unconnected_vias: bool,
@@ -87,6 +121,14 @@ pub struct BatchAutorouter {
     /// fastroute escape planner: SMD pins (by item id) the fanout stage leaves alone, because
     /// the plan routes them on their own layer (see [`super::escape::plan_escapes`]).
     pub fanout_skip_pins: Option<std::sync::Arc<BTreeSet<i32>>>,
+    /// fastroute multi-start: stops the run once it falls clearly behind a reference run (see
+    /// [`PruneRule`]); only set for the extra variants, never for the stock ones.
+    pub prune: Option<PruneRule>,
+    /// The pass after which [`Self::prune`] stopped the run.
+    pub pruned_at: Option<i32>,
+    /// fastroute: the unrouted connections after each autorouting pass (and the pass's
+    /// seconds), for the multi-start variants to compare against.
+    pub pass_history: Vec<(i32, f64)>,
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
@@ -205,6 +247,9 @@ impl BatchAutorouter {
             order_seed: None,
             priority_nets: None,
             fanout_skip_pins: None,
+            prune: None,
+            pruned_at: None,
+            pass_history: Vec::new(),
             fanout_timed_out: false,
             initial_unrouted_count: 0,
             pristine: None,
@@ -1064,6 +1109,15 @@ impl BatchAutorouter {
                     stage: 0,
                     score: after.router_score,
                 });
+                self.pass_history.push((after.incomplete_count, pass_start.elapsed().as_secs_f64()));
+                if let Some(rule) = &self.prune {
+                    if let Some(reason) = rule.check(&self.pass_history) {
+                        log::info!("Stopping the auto-router after pass #{current_pass}: {reason}");
+                        self.pruned_at = Some(current_pass);
+                        stop.request_stop_autorouter();
+                        break;
+                    }
+                }
             }
             if ctx.enhancements && !self.is_optimizer_autorouter && continue_autorouting {
                 // fastroute: a pass that loses much more than it gains (ripped nets) is undone:
