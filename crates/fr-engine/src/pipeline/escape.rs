@@ -1,10 +1,23 @@
 //! fastroute: the dense parts of a board (fine-pitch SMD parts such as QFN, QFP, TSSOP and
 //! BGA), whose pins are hard to escape one at a time. The report uses them to tell how many
 //! unrouted connections start at such a part; the escape planner works on them.
+//!
+//! The fanout stage gives every SMD pin a via, one pin at a time. At a dense part those vias
+//! fill the space around the pads, also for pins whose connection stays on the pad's layer
+//! (a decoupling capacitor next to the part, a bus to a neighbour on the same side). The
+//! escape planner ([`plan_escapes`]) decides for all pins of the dense parts together which
+//! ones keep to their own layer: a pin whose nearest pin of the same net (on another part) is
+//! reachable on the pad's layer stays there, unless its airline crosses the airline of
+//! another such pin; of crossing pins, those with the most crossings get their via, until no
+//! two airlines on a layer cross. Pins of plane nets and pins without such a target are fanned
+//! out as before.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use fr_geom::{FloatPoint, IntBox};
 
 use crate::board::{ItemKey, RoutingBoard};
+use crate::ids::LayerNo;
 use crate::structure::Unit;
 
 /// A part counts as dense with at least this many SMD pins with nets ...
@@ -99,6 +112,117 @@ pub fn escape_contact<'a>(
         .map(|(part, _)| EscapeContact { part, at_pin: false })
 }
 
+/// The result of [`plan_escapes`].
+#[derive(Clone, Debug, Default)]
+pub struct EscapePlan {
+    /// The pins (item ids) that keep to their own layer: the fanout stage leaves them alone.
+    pub keep_on_layer: BTreeSet<i32>,
+    pub dense_parts: usize,
+    /// Pins of the dense parts the plan looked at (signal pins with a target on another part).
+    pub planned: usize,
+    /// Pins that would stay on their layer but got a via because their airlines crossed.
+    pub via_for_crossings: usize,
+}
+
+/// One pin of a dense part with a target on the same layer.
+struct Candidate {
+    id: i32,
+    layer: LayerNo,
+    from: FloatPoint,
+    to: FloatPoint,
+    /// The item id of the target pin (airlines to the same pin do not cross).
+    target: i32,
+}
+
+/// Plans the escapes of the dense parts of `board` (see the module comment).
+pub fn plan_escapes(board: &RoutingBoard) -> EscapePlan {
+    let parts = dense_parts(board);
+    let mut plan = EscapePlan { dense_parts: parts.len(), ..Default::default() };
+    if parts.is_empty() {
+        return plan;
+    }
+    // nets with a plane: their pins want a via to the plane
+    let plane_nets: BTreeSet<i32> = board
+        .get_conduction_areas()
+        .into_iter()
+        .flat_map(|k| board.item(k).net_numbers().to_vec())
+        .collect();
+    // pins by net: (key, centre, component)
+    let mut by_net: BTreeMap<i32, Vec<(ItemKey, FloatPoint, i32)>> = BTreeMap::new();
+    for p in board.get_pins() {
+        let it = board.item(p);
+        if it.net_count() == 1 {
+            by_net.entry(it.net_number(0)).or_default().push((p, it.center(board).to_float(), it.component_no()));
+        }
+    }
+    let mut candidates = Vec::new();
+    for part in &parts {
+        for &p in &part.pins {
+            let it = board.item(p);
+            let net = it.net_number(0);
+            if it.net_count() != 1 || plane_nets.contains(&net) {
+                continue;
+            }
+            let from = it.center(board).to_float();
+            let Some(&(target, to, _)) = by_net
+                .get(&net)
+                .into_iter()
+                .flatten()
+                .filter(|(_, _, c)| *c != part.component_no)
+                .min_by(|a, b| from.distance(&a.1).total_cmp(&from.distance(&b.1)))
+            else {
+                continue;
+            };
+            plan.planned += 1;
+            let layer = it.first_layer(board);
+            let t = board.item(target);
+            if t.first_layer(board) <= layer && layer <= t.last_layer(board) {
+                candidates.push(Candidate { id: it.id().0, layer, from, to, target: t.id().0 });
+            }
+        }
+    }
+    // the crossing graph of the airlines on each layer; then, greedily, the pin with the most
+    // crossings (then the longest airline, then the lowest id) gets its via
+    let n = candidates.len();
+    let mut crossing: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
+    for i in 0..n {
+        for j in i + 1..n {
+            let (a, b) = (&candidates[i], &candidates[j]);
+            if a.layer == b.layer && a.target != b.target && segments_cross(a.from, a.to, b.from, b.to) {
+                crossing[i].insert(j);
+                crossing[j].insert(i);
+            }
+        }
+    }
+    let mut via = vec![false; n];
+    loop {
+        let worst = (0..n).filter(|&i| !via[i] && !crossing[i].is_empty()).max_by(|&i, &j| {
+            let len = |k: usize| candidates[k].from.distance(&candidates[k].to);
+            crossing[i].len().cmp(&crossing[j].len()).then(len(i).total_cmp(&len(j))).then(candidates[j].id.cmp(&candidates[i].id))
+        });
+        let Some(w) = worst else { break };
+        via[w] = true;
+        plan.via_for_crossings += 1;
+        for k in std::mem::take(&mut crossing[w]) {
+            crossing[k].remove(&w);
+        }
+    }
+    plan.keep_on_layer = (0..n).filter(|&i| !via[i]).map(|i| candidates[i].id).collect();
+    plan
+}
+
+/// Whether the segments `a1 a2` and `b1 b2` cross (touching ends do not count).
+fn segments_cross(a1: FloatPoint, a2: FloatPoint, b1: FloatPoint, b2: FloatPoint) -> bool {
+    // (not f64::signum: that is 1 for 0)
+    let orient = |p: FloatPoint, q: FloatPoint, r: FloatPoint| {
+        let c = (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+        (c > 0.0) as i32 - (c < 0.0) as i32
+    };
+    let (d1, d2) = (orient(b1, b2, a1), orient(b1, b2, a2));
+    let (d3, d4) = (orient(a1, a2, b1), orient(a1, a2, b2));
+    d1 * d2 < 0 && d3 * d4 < 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +235,14 @@ mod tests {
         let mut pts = pts;
         pts.push(FloatPoint::new(0.0, 10_000.0));
         assert_eq!(median_pitch(&pts), 500.0);
+    }
+
+    #[test]
+    fn crossing_segments() {
+        let p = FloatPoint::new;
+        assert!(segments_cross(p(0.0, 0.0), p(2.0, 2.0), p(0.0, 2.0), p(2.0, 0.0)));
+        assert!(!segments_cross(p(0.0, 0.0), p(2.0, 0.0), p(0.0, 1.0), p(2.0, 1.0)));
+        // sharing an end is not a crossing
+        assert!(!segments_cross(p(0.0, 0.0), p(2.0, 2.0), p(2.0, 2.0), p(4.0, 0.0)));
     }
 }
