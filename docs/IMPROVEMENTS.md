@@ -173,8 +173,9 @@ instead (to measure a key).
 
 In the first run alone (`--first-order=KEY --multi-start=1`, 11 boards, stock 163 unrouted):
 short first 157, density 167, crossings 167, long first 175. Routing the hardest nets first
-does not help: the rip-up passes already move failing nets to the front, and the short nets
-that are routed early rarely have to move later.
+does not help here, probably because the later passes already move the failing nets to the
+front; short nets first leaves the long ones to route around them, the usual order in VLSI
+routers.
 
 Quick suite (28 boards, `-j 3`), `--order-variants` alone: unrouted 191 → 188, none worse,
 fully routed 10 → 12, total time 3593 → 5796 s. Better: Hardware_Playground_minimal 1 → 0
