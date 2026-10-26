@@ -20,6 +20,11 @@ use super::destination::DestinationDistance;
 use super::engine::{Adjustment, AutorouteEngine, DoorId, DrillId, Expandable, IncompleteRef, PageId, RoomId, RoomKind};
 use super::TRACE_WIDTH_TOLERANCE;
 
+/// fastroute: maze search steps (expanded queue elements) of all searches in the process. The
+/// count only depends on what is routed, not on the machine or its load, so it measures the
+/// work of a routing run where wall-clock time would not (see `pipeline::run_pipeline`).
+pub static SEARCH_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Java `MazeSearchEngine.ALREADY_RIPPED_COSTS`.
 pub const ALREADY_RIPPED_COSTS: i32 = 1;
 
@@ -241,7 +246,11 @@ impl<'a> MazeSearchEngine<'a> {
 
     /// Java `findConnection()`: the destination door and its section of the found connection.
     pub fn find_connection(&mut self) -> Option<MazeSearchResult> {
-        while self.occupy_next_element() {}
+        let mut steps = 0u64;
+        while self.occupy_next_element() {
+            steps += 1;
+        }
+        SEARCH_STEPS.fetch_add(steps, std::sync::atomic::Ordering::Relaxed);
         self.destination_door.map(|d| MazeSearchResult { destination_door: d, section_no_of_door: self.section_no_of_destination_door })
     }
 
