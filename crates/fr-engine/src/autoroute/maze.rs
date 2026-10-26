@@ -303,6 +303,14 @@ impl<'a> MazeSearchEngine<'a> {
         let door_is_drill = matches!(list_element.door, Expandable::Drill(_));
         let backtrack_is_drill = matches!(list_element.backtrack_door, Some(Expandable::Drill(_)));
         if self.ctrl.is_fanout && door_is_drill && backtrack_is_drill {
+            if let Expandable::Drill(d) = list_element.door {
+                // fastroute: a via that lands on a layer the net may not route on (a power
+                // layer) is no fanout: ending here left the pin unrouted, so look further
+                let layer = self.eng.drill(d).first_layer + list_element.section_no_of_door;
+                if !self.ctrl.layer_active[layer as usize] {
+                    return true;
+                }
+            }
             // algorithm completed after the first drill;
             self.destination_door = Some(list_element.door);
             self.section_no_of_destination_door = list_element.section_no_of_door;
