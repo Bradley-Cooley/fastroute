@@ -45,6 +45,7 @@ struct Args {
     no_enhancements: bool,
     multi_start: usize,
     repair: Option<f64>,
+    repair_escapes: bool,
     cost_portfolio: bool,
     escape: pipeline::EscapeMode,
     prune_variants: bool,
@@ -74,6 +75,7 @@ fn parse_args() -> Result<Args, String> {
         no_enhancements: false,
         multi_start: 4,
         repair: None,
+        repair_escapes: false,
         cost_portfolio: false,
         escape: pipeline::EscapeMode::Off,
         prune_variants: false,
@@ -153,6 +155,12 @@ fn parse_args() -> Result<Args, String> {
             }
             "--prune-variants" => {
                 args.prune_variants = true;
+                i += 1;
+                continue;
+            }
+            "--repair-escapes" => {
+                args.repair_escapes = true;
+                args.repair = Some(args.repair.unwrap_or(DEFAULT_REPAIR_SECS));
                 i += 1;
                 continue;
             }
@@ -309,6 +317,8 @@ options:
                            around each unrouted connection (variants in parallel, kept
                            only if better); time budget 120 s
   --repair-time=SECONDS    --repair with this time budget
+  --repair-escapes         --repair that first rips and re-routes the escapes of each
+                           fine-pitch part with unrouted connections at its pins together
   --no-enhancements        Freerouting's behaviour without fastroute's improvements
   --parity                 byte-identical Freerouting results (deterministic, slower)
   --optimizer-mode=M       java-compat | parallel
@@ -604,7 +614,7 @@ fn run() -> Result<(), String> {
         repair: (!args.parity && !args.no_enhancements)
             .then_some(args.repair)
             .flatten()
-            .map(|secs| fr_engine::pipeline::repair::RepairOptions { budget: std::time::Duration::from_secs_f64(secs) }),
+            .map(|secs| fr_engine::pipeline::repair::RepairOptions { budget: std::time::Duration::from_secs_f64(secs), escape_windows: args.repair_escapes }),
         checkpoint,
         observer: Some(Arc::new(|board, ev| {
             match ev {

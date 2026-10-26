@@ -15,6 +15,14 @@
 //! Each unrouted connection also says whether it starts at a dense part (`escape`: a fine-pitch
 //! SMD part, see `fr_engine::pipeline::escape`), with one end on a pin of the part or near its
 //! pads; `stats.unrouted_escape` counts them, and `dense_parts` lists the parts.
+//!
+//! With `--diagnose`, an escape connection is also routed alone (no rip-up) from its end at
+//! the part on copies of the final board (`escape.test`): as it is (`final`), without the
+//! traces and vias of the part's other nets near the part (`own_cleared`: the window is the
+//! pads' bounding box plus [`ESCAPE_WINDOW_MM`]), without those of all other nets there
+//! (`foreign_cleared`), and without both (`window_cleared`). A connection that only routes
+//! with the part's own escapes cleared is blocked by them (a case for planning the escapes of
+//! a part together); one that does not route even with the window cleared fails further out.
 
 use std::fmt::Write as _;
 
@@ -28,6 +36,9 @@ pub struct Timings {
     pub route_s: f64,
     pub total_s: f64,
 }
+
+/// The margin around a dense part's pads in which `escape.test` clears traces and vias.
+const ESCAPE_WINDOW_MM: f64 = 2.0;
 
 /// The result of routing one end of an unrouted connection on the loaded board.
 struct Attempt {
@@ -124,6 +135,45 @@ fn attempt(loaded: &RoutingBoard, board: &BasicBoard, key: ItemKey, settings: &R
     Some(Attempt { state: r.state, details: r.details })
 }
 
+/// `escape.test` (see the module comment): whether `end` routes alone on copies of the final
+/// board with the traces and vias near `part` cleared in four ways.
+fn escape_test(board: &RoutingBoard, part: &fr_engine::pipeline::escape::DensePart, end: ItemKey, settings: &RouterSettings, per_mm: f64) -> String {
+    let basic: &BasicBoard = board;
+    let id = basic.item(end).id();
+    let own_nets: std::collections::HashSet<_> = part.pins.iter().flat_map(|&k| basic.item(k).net_numbers().to_vec()).collect();
+    let end_nets = basic.item(end).net_numbers().to_vec();
+    let window = part.bbox.offset(ESCAPE_WINDOW_MM * per_mm);
+    // the routable items in the window that are not of the connection's net
+    let (mut own, mut foreign) = (Vec::new(), Vec::new());
+    for k in basic.get_items() {
+        let it = basic.item(k);
+        if !it.is_routable() || it.net_numbers().iter().any(|n| end_nets.contains(n)) || !it.bounding_box(basic).overlaps(&window) {
+            continue;
+        }
+        if it.net_numbers().iter().any(|n| own_nets.contains(n)) {
+            own.push(it.id());
+        } else {
+            foreign.push(it.id());
+        }
+    }
+    let routes = |clear: &[&Vec<_>]| {
+        let mut b = board.clone();
+        let keys: Vec<ItemKey> = clear.iter().flat_map(|v| v.iter()).filter_map(|&i| b.get_item(i)).collect();
+        b.remove_items(keys);
+        let Some(k) = b.get_item(id) else { return false };
+        b.autoroute(k, settings, settings.get_via_costs(), None, None).state == AutorouteAttemptState::Routed
+    };
+    format!(
+        "{{\"final\": {}, \"own_cleared\": {}, \"foreign_cleared\": {}, \"window_cleared\": {}, \"own_items\": {}, \"foreign_items\": {}}}",
+        routes(&[]),
+        routes(&[&own]),
+        routes(&[&foreign]),
+        routes(&[&own, &foreign]),
+        own.len(),
+        foreign.len()
+    )
+}
+
 fn attempt_json(a: &Option<Attempt>) -> String {
     match a {
         None => "null".into(),
@@ -185,7 +235,13 @@ pub fn write_report(
                 if !is_ignored {
                     unrouted_escape += 1;
                 }
-                write!(s, ", \"escape\": {{\"component\": {}, \"at_pin\": {}}}", json_str(&c.part.name), c.at_pin).unwrap();
+                write!(s, ", \"escape\": {{\"component\": {}, \"at_pin\": {}", json_str(&c.part.name), c.at_pin).unwrap();
+                if loaded.is_some() && !is_ignored {
+                    // from the end at the part
+                    let end = if c.part.pins.contains(&a.to_item) { a.to_item } else { a.from_item };
+                    write!(s, ", \"test\": {}", escape_test(board, c.part, end, settings, u.per_mm)).unwrap();
+                }
+                s.push('}');
             }
             None => s.push_str(", \"escape\": null"),
         }
