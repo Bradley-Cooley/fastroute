@@ -394,6 +394,15 @@ search: the maze router already finds its way around congestion through rip-up, 
 corridor mostly stops it from taking a better detour. The code is on the
 `negotiated-congestion` branch.
 
+Not adopted either: connection ordering for the first pass (PR #10, branch `hard-first`).
+The nets were ranked by an estimate from their airlines on the unrouted board: short airlines
+first, dense pin areas first (other nets' airline ends within 1 mm), most airline crossings
+first, long airlines first. In the first run alone (11 boards, stock 163 unrouted): short
+first 157, density 167, crossings 167, long first 175, so routing the hardest nets first does
+not help. As four extra multi-start variants on the quick suite: 191 → 188 unrouted, none
+worse, +61% time; but on top of `--escape-plan --multi-start-costs --failure-history
+--prune-variants --repair-time=120` (167) they won no board and cost 11% more time.
+
 ## Open ideas
 
 - CLI users feeding KiCad DSN files directly get none of the plugin's export
