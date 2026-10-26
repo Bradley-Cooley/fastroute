@@ -179,7 +179,12 @@ routers.
 
 Quick suite (28 boards, `-j 3`), `--order-variants` alone: unrouted 191 → 188, none worse,
 fully routed 10 → 12, total time 3593 → 5796 s. Better: Hardware_Playground_minimal 1 → 0
-(density), mightyduino 1 → 0 (density), mdbwerk 2 → 1 (short first).
+(density), mightyduino 1 → 0 (density), mdbwerk 2 → 1 (short first). On top of `--escape-plan --multi-start-costs
+--failure-history --prune-variants --repair-time=120` (167 unrouted) the order variants won
+no board: every board but one routed the same, +11% time. The exception, SunLeaf 23 → 29, did
+not run the multi-start stage at all: its first run took 222 s instead of 171 s on the
+busier machine, over the wall-clock limit for running variants (three times the first run
+must stay under 600 s).
 
 ## Region repair (`--repair`, new)
 
