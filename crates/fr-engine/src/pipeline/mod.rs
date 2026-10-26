@@ -34,6 +34,7 @@ pub mod escape;
 pub mod fanout;
 pub mod history;
 pub mod optimizer;
+pub mod ordering;
 mod parallel_pass;
 pub mod repair;
 pub mod stats;
@@ -73,6 +74,12 @@ pub struct PipelineContext {
     pub escape: EscapeMode,
     /// fastroute failure-only history (`--failure-history`): see [`HistoryMode`].
     pub failure_history: HistoryMode,
+    /// fastroute connection ordering (`--order-variants`): one more multi-start variant per
+    /// [`ordering::OrderKey`], run next to the stock ones.
+    pub order_variants: bool,
+    /// fastroute (`--first-order=KEY`): the first run orders its first pass by this key (to
+    /// measure it).
+    pub first_order: Option<ordering::OrderKey>,
     /// fastroute (`--prune-variants`): stop the extra multi-start variants (cost portfolio,
     /// escape plan) that fall clearly behind the first run (see [`autorouter::PruneRule`]).
     pub prune_variants: bool,
@@ -138,6 +145,8 @@ impl std::fmt::Debug for PipelineContext {
             .field("cost_portfolio", &self.cost_portfolio)
             .field("escape", &self.escape)
             .field("failure_history", &self.failure_history)
+            .field("order_variants", &self.order_variants)
+            .field("first_order", &self.first_order)
             .field("prune_variants", &self.prune_variants)
             .field("repair", &self.repair)
             .field("checkpoint", &self.checkpoint.is_some())
@@ -173,6 +182,8 @@ impl Default for PipelineContext {
             cost_portfolio: false,
             escape: EscapeMode::Off,
             failure_history: HistoryMode::Off,
+            order_variants: false,
+            first_order: None,
             prune_variants: false,
             repair: None,
             checkpoint: None,
@@ -267,6 +278,9 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     });
     if ctx.escape == EscapeMode::Only {
         autorouter.fanout_skip_pins = escape_plan.clone();
+    }
+    if let Some(key) = ctx.first_order.filter(|_| ctx.enhancements) {
+        autorouter.net_ranks = Some(std::sync::Arc::new(ordering::net_ranks(board, key)));
     }
     if ctx.enhancements && ctx.failure_history == HistoryMode::Only {
         autorouter.failure_history = Some(FailureHistory::new(board.communication.get_resolution(crate::structure::Unit::Um)));
@@ -367,6 +381,8 @@ fn multi_start(
         stock: bool,
         /// routes with the failure history
         history: bool,
+        /// orders the first pass by this key
+        order: Option<ordering::OrderKey>,
     }
     let n = ctx.multi_start;
     let only = ctx.escape == EscapeMode::Only && escape_plan.is_some_and(|p| !p.is_empty());
@@ -378,6 +394,7 @@ fn multi_start(
             skip: if only { escape_plan.cloned() } else { None },
             stock: true,
             history: ctx.failure_history == HistoryMode::Only,
+            order: None,
         })
         .collect();
     // The cost portfolio and the escape planner add their variants after the stock ones
@@ -393,6 +410,7 @@ fn multi_start(
                 skip: None,
                 stock: false,
                 history: false,
+                order: None,
             });
         }
     }
@@ -409,6 +427,7 @@ fn multi_start(
                 skip: escape_plan.cloned(),
                 stock: false,
                 history: false,
+                order: None,
             });
         }
     }
@@ -422,6 +441,20 @@ fn multi_start(
                 skip: None,
                 stock: false,
                 history: true,
+                order: None,
+            });
+        }
+    }
+    if ctx.order_variants {
+        for key in ordering::OrderKey::ALL {
+            specs.push(Variant {
+                label: format!(" (first pass ordered by {})", key.name()),
+                seed: None,
+                settings: settings.clone(),
+                skip: None,
+                stock: false,
+                history: false,
+                order: Some(key),
             });
         }
     }
@@ -446,6 +479,8 @@ fn multi_start(
                 cost_portfolio: false,
                 escape: EscapeMode::Off,
                 failure_history: HistoryMode::Off,
+                order_variants: false,
+                first_order: None,
                 prune_variants: false,
                 repair: None,
                 checkpoint: ctx.checkpoint.clone(),
@@ -458,6 +493,9 @@ fn multi_start(
             if spec.history {
                 router.failure_history = Some(FailureHistory::new(start.communication.get_resolution(crate::structure::Unit::Um)));
                 router.history_in_costs = true;
+            }
+            if let Some(key) = spec.order {
+                router.net_ranks = Some(std::sync::Arc::new(ordering::net_ranks(start, key)));
             }
             if !spec.stock {
                 router.prune = prune.clone();

@@ -162,6 +162,24 @@ none worse, total time 9193 → 11340 s. Better: bm05 5 → 4 (a history variant
 a decay of 0.3-0.7, so on its own it is one more way to perturb the search rather than a
 reliable gain.
 
+## Connection ordering (`--order-variants`, new)
+
+Freerouting routes the first pass in board order (the stock multi-start variants shuffle it);
+later passes start with the nets that failed in the pass before. `--order-variants` adds four
+variants whose first pass orders the nets by an estimate from their airlines on the unrouted
+board: short airlines first, dense pin areas first (other nets' airline ends within 1 mm),
+most airline crossings first, long airlines first. `--first-order=KEY` orders the first run
+instead (to measure a key).
+
+In the first run alone (`--first-order=KEY --multi-start=1`, 11 boards, stock 163 unrouted):
+short first 157, density 167, crossings 167, long first 175. Routing the hardest nets first
+does not help: the rip-up passes already move failing nets to the front, and the short nets
+that are routed early rarely have to move later.
+
+Quick suite (28 boards, `-j 3`), `--order-variants` alone: unrouted 191 → 188, none worse,
+fully routed 10 → 12, total time 3593 → 5796 s. Better: Hardware_Playground_minimal 1 → 0
+(density), mightyduino 1 → 0 (density), mdbwerk 2 → 1 (short first).
+
 ## Region repair (`--repair`, new)
 
 The autorouter routes one connection at a time. When the last connections fail, routing

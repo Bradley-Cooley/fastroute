@@ -49,6 +49,8 @@ struct Args {
     escape: pipeline::EscapeMode,
     prune_variants: bool,
     failure_history: pipeline::HistoryMode,
+    order_variants: bool,
+    first_order: Option<pipeline::ordering::OrderKey>,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -78,6 +80,8 @@ fn parse_args() -> Result<Args, String> {
         escape: pipeline::EscapeMode::Off,
         prune_variants: false,
         failure_history: pipeline::HistoryMode::Off,
+        order_variants: false,
+        first_order: None,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -148,6 +152,23 @@ fn parse_args() -> Result<Args, String> {
             }
             "--failure-history=only" => {
                 args.failure_history = pipeline::HistoryMode::Only;
+                i += 1;
+                continue;
+            }
+            "--order-variants" => {
+                args.order_variants = true;
+                i += 1;
+                continue;
+            }
+            s if s.starts_with("--first-order=") => {
+                let key = &s["--first-order=".len()..];
+                match pipeline::ordering::OrderKey::parse(key) {
+                    Some(k) => args.first_order = Some(k),
+                    None => {
+                        eprintln!("unknown --first-order key '{key}' (short, long, density, crossings)");
+                        std::process::exit(2);
+                    }
+                }
                 i += 1;
                 continue;
             }
@@ -303,6 +324,11 @@ options:
                            corridors of connections that keep failing (the stock variants
                            still run); =only: the first run and the stock variants use it
                            instead
+  --order-variants         add 4 multi-start variants whose first pass routes the nets in
+                           order of a difficulty estimate (short airlines first, dense pin
+                           areas, airline crossings, long airlines first)
+  --first-order=KEY        order the first run's first pass by KEY (short, long, density,
+                           crossings)
   --prune-variants         stop the extra variants (costs, escape plan) once they fall
                            clearly behind the first run; the stock variants always finish
   --repair                 after routing, rip and re-route the copper in growing windows
@@ -601,6 +627,8 @@ fn run() -> Result<(), String> {
         escape: if args.parity || args.no_enhancements { pipeline::EscapeMode::Off } else { args.escape },
         prune_variants: args.prune_variants,
         failure_history: if args.parity || args.no_enhancements { pipeline::HistoryMode::Off } else { args.failure_history },
+        order_variants: args.order_variants && !args.parity && !args.no_enhancements,
+        first_order: if args.parity || args.no_enhancements { None } else { args.first_order },
         repair: (!args.parity && !args.no_enhancements)
             .then_some(args.repair)
             .flatten()

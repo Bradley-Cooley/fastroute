@@ -116,6 +116,10 @@ pub struct BatchAutorouter {
     pass_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
     /// fastroute multi-start: shuffles the order of the first pass's signal items.
     pub order_seed: Option<i64>,
+    /// fastroute hardest-first ordering: the first pass routes the signal items of nets with
+    /// higher ranks first (after any `order_seed` shuffle, which then breaks ties; see
+    /// [`super::ordering`]).
+    pub net_ranks: Option<std::sync::Arc<HashMap<NetNo, i64>>>,
     /// fastroute repair: items of these nets are routed first in the first pass (after the
     /// plane items), so the connection a repair window was opened for gets the freed space.
     pub priority_nets: Option<BTreeSet<NetNo>>,
@@ -257,6 +261,7 @@ impl BatchAutorouter {
             pass_threads: 0,
             pass_pool: None,
             order_seed: None,
+            net_ranks: None,
             priority_nets: None,
             fanout_skip_pins: None,
             prune: None,
@@ -361,6 +366,17 @@ impl BatchAutorouter {
         board.item(key).net_numbers().iter().any(|&n| board.rules.nets.get(n).map(|n| n.contains_plane()).unwrap_or(false))
     }
 
+    /// fastroute hardest-first ordering: sorts the signal items by the rank of their nets
+    /// (stable, so the order so far breaks ties); the plane items stay in front.
+    fn rank_items(&self, board: &RoutingBoard, items: &mut Vec<ItemKey>) {
+        let Some(ranks) = &self.net_ranks else { return };
+        let (plane, mut signal): (Vec<ItemKey>, Vec<ItemKey>) = items.iter().partition(|&&k| Self::is_plane_item(board, k));
+        let rank = |k: &ItemKey| board.item(*k).net_numbers().iter().filter_map(|n| ranks.get(n)).copied().max().unwrap_or(i64::MIN);
+        signal.sort_by_key(|k| std::cmp::Reverse(rank(k)));
+        *items = plane;
+        items.extend(signal);
+    }
+
     /// Java `AutoroutePassRunner.reorderSingleThreadItems(list, passNo)`.
     fn reorder_items(&self, board: &RoutingBoard, list: &mut Vec<ItemKey>, pass_no: i32) {
         let (mut plane_items, mut signal_items): (Vec<ItemKey>, Vec<ItemKey>) = (Vec::new(), Vec::new());
@@ -448,6 +464,9 @@ impl BatchAutorouter {
             fr_jcompat::random::shuffle(&mut signal, &mut rnd);
             items = plane;
             items.extend(signal);
+        }
+        if pass_no == 1 {
+            self.rank_items(board, &mut items);
         }
         if pass_no == 1 {
             if let Some(first) = &self.priority_nets {
@@ -602,6 +621,9 @@ impl BatchAutorouter {
             fr_jcompat::random::shuffle(&mut signal, &mut rnd);
             items = plane;
             items.extend(signal);
+        }
+        if pass_no == 1 {
+            self.rank_items(board, &mut items);
         }
         let params = self.params();
         let threads = self.pass_threads;
