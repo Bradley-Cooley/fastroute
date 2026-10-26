@@ -83,6 +83,8 @@ pub struct AutorouteControl {
     pub connect_to_planes: bool,
     /// fastroute failure-only history (see [`super::history`]).
     pub history: Option<std::sync::Arc<super::history::FailureHistory>>,
+    /// fastroute global routing: the nets' corridors (see [`crate::pipeline::global`]).
+    pub corridors: Option<std::sync::Arc<crate::pipeline::global::GlobalCorridors>>,
     /// The possible (partial) vias (Java `viaRule`, a copy of the net class rule).
     pub via_rule: ViaRule,
     pub net_number: NetNo,
@@ -177,6 +179,7 @@ impl AutorouteControl {
             remove_unconnected_vias: true,
             connect_to_planes: false,
             history: None,
+            corridors: None,
             via_rule: ViaRule::empty(),
             net_number: 0,
             via_clearance_class: 0,

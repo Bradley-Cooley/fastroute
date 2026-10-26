@@ -32,6 +32,7 @@
 pub mod autorouter;
 pub mod escape;
 pub mod fanout;
+pub mod global;
 pub mod history;
 pub mod optimizer;
 mod parallel_pass;
@@ -73,6 +74,9 @@ pub struct PipelineContext {
     pub escape: EscapeMode,
     /// fastroute failure-only history (`--failure-history`): see [`HistoryMode`].
     pub failure_history: HistoryMode,
+    /// fastroute global routing with negotiated congestion (`--global-route`): see
+    /// [`global`]; the modes are those of [`HistoryMode`].
+    pub global_route: HistoryMode,
     /// fastroute (`--prune-variants`): stop the extra multi-start variants (cost portfolio,
     /// escape plan) that fall clearly behind the first run (see [`autorouter::PruneRule`]).
     pub prune_variants: bool,
@@ -138,6 +142,7 @@ impl std::fmt::Debug for PipelineContext {
             .field("cost_portfolio", &self.cost_portfolio)
             .field("escape", &self.escape)
             .field("failure_history", &self.failure_history)
+            .field("global_route", &self.global_route)
             .field("prune_variants", &self.prune_variants)
             .field("repair", &self.repair)
             .field("checkpoint", &self.checkpoint.is_some())
@@ -173,6 +178,7 @@ impl Default for PipelineContext {
             cost_portfolio: false,
             escape: EscapeMode::Off,
             failure_history: HistoryMode::Off,
+            global_route: HistoryMode::Off,
             prune_variants: false,
             repair: None,
             checkpoint: None,
@@ -268,6 +274,10 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     if ctx.escape == EscapeMode::Only {
         autorouter.fanout_skip_pins = escape_plan.clone();
     }
+    let corridors = (ctx.enhancements && ctx.global_route != HistoryMode::Off).then(|| global_corridors(board, settings)).flatten();
+    if ctx.global_route == HistoryMode::Only {
+        autorouter.corridors_global = corridors.clone();
+    }
     if ctx.enhancements && ctx.failure_history == HistoryMode::Only {
         autorouter.failure_history = Some(FailureHistory::new(board.communication.get_resolution(crate::structure::Unit::Um)));
         autorouter.history_in_costs = true;
@@ -294,7 +304,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
             } else {
                 ctx.observe(board, &LiveEvent::Stage("multi-start"));
                 let history: Vec<i32> = autorouter.pass_history.iter().map(|h| h.0).collect();
-                multi_start(board, &start, settings, ctx, escape_plan.as_ref(), history);
+                multi_start(board, &start, settings, ctx, escape_plan.as_ref(), history, corridors.as_ref());
             }
         }
     } else if settings.is_fanout_enabled() && !ctx.stop.is_stop_autorouter_requested() {
@@ -348,6 +358,7 @@ fn multi_start(
     ctx: &PipelineContext,
     escape_plan: Option<&std::sync::Arc<std::collections::BTreeSet<i32>>>,
     first_history: Vec<i32>,
+    corridors: Option<&std::sync::Arc<global::GlobalCorridors>>,
 ) {
     use rayon::prelude::*;
     let mut stats = StatsCache::new();
@@ -367,6 +378,8 @@ fn multi_start(
         stock: bool,
         /// routes with the failure history
         history: bool,
+        /// routes with the global corridors
+        global: bool,
     }
     let n = ctx.multi_start;
     let only = ctx.escape == EscapeMode::Only && escape_plan.is_some_and(|p| !p.is_empty());
@@ -378,6 +391,7 @@ fn multi_start(
             skip: if only { escape_plan.cloned() } else { None },
             stock: true,
             history: ctx.failure_history == HistoryMode::Only,
+            global: ctx.global_route == HistoryMode::Only,
         })
         .collect();
     // The cost portfolio and the escape planner add their variants after the stock ones
@@ -393,6 +407,7 @@ fn multi_start(
                 skip: None,
                 stock: false,
                 history: false,
+                global: false,
             });
         }
     }
@@ -409,6 +424,7 @@ fn multi_start(
                 skip: escape_plan.cloned(),
                 stock: false,
                 history: false,
+                global: false,
             });
         }
     }
@@ -422,6 +438,21 @@ fn multi_start(
                 skip: None,
                 stock: false,
                 history: true,
+                global: false,
+            });
+        }
+    }
+    if ctx.global_route == HistoryMode::Variants && corridors.is_some() {
+        for k in 0..n {
+            let order = if k == 0 { "first-run order".to_string() } else { format!("order {k}") };
+            specs.push(Variant {
+                label: format!(" (global corridors, {order})"),
+                seed: (k > 0).then_some(k),
+                settings: settings.clone(),
+                skip: None,
+                stock: false,
+                history: false,
+                global: true,
             });
         }
     }
@@ -446,6 +477,7 @@ fn multi_start(
                 cost_portfolio: false,
                 escape: EscapeMode::Off,
                 failure_history: HistoryMode::Off,
+                global_route: HistoryMode::Off,
                 prune_variants: false,
                 repair: None,
                 checkpoint: ctx.checkpoint.clone(),
@@ -455,6 +487,9 @@ fn multi_start(
             let mut router = BatchAutorouter::for_job(&b, &spec.settings);
             router.order_seed = spec.seed.map(|s| 0x5eed_0000 + s as i64);
             router.fanout_skip_pins = spec.skip.clone();
+            if spec.global {
+                router.corridors_global = corridors.cloned();
+            }
             if spec.history {
                 router.failure_history = Some(FailureHistory::new(start.communication.get_resolution(crate::structure::Unit::Um)));
                 router.history_in_costs = true;
@@ -502,6 +537,39 @@ fn multi_start(
         *board = b;
     }
 }
+
+/// Global routing (see [`global`]) of `board`: the corridors of its nets, or `None` if the
+/// board has nothing to route.
+fn global_corridors(board: &RoutingBoard, settings: &RouterSettings) -> Option<std::sync::Arc<global::GlobalCorridors>> {
+    let t = std::time::Instant::now();
+    let basic: &crate::board::BasicBoard = board;
+    let default_class = basic.rules.default_net_class();
+    let net = (1..=basic.rules.nets.max_net_number())
+        .find(|&n| basic.rules.nets.get(n).is_some_and(|x| x.get_net_class() == default_class && !x.contains_plane()))?;
+    let ctrl = crate::autoroute::AutorouteControl::new_default(board, net, settings);
+    let graph = global::CapacityGraph::build(board, &ctrl)?;
+    let connections = global::board_connections(board, &graph);
+    if connections.is_empty() {
+        return None;
+    }
+    let result = global::global_route(&graph, &connections, settings, ctrl.min_normal_via_cost);
+    log::info!(
+        "Global routing: {} x {} tiles of {:.2} mm on {} layers, {} connections, {} iterations, overflow {} on {} edges ({:.1} s).",
+        graph.nx,
+        graph.ny,
+        graph.tile / board.communication.get_resolution(crate::structure::Unit::Mm),
+        graph.layers.len(),
+        result.connections,
+        result.iterations,
+        result.overflow,
+        result.overused,
+        t.elapsed().as_secs_f64()
+    );
+    Some(std::sync::Arc::new(global::GlobalCorridors::new(graph, &result, CORRIDOR_FACTOR)))
+}
+
+/// The cost factor of routing outside the net's global corridor.
+const CORRIDOR_FACTOR: f64 = 2.0;
 
 /// [`autorouter::PruneRule`] of `--prune-variants`.
 const PRUNE_MIN_PASS: usize = 3;

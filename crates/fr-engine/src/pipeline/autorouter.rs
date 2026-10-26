@@ -134,6 +134,8 @@ pub struct BatchAutorouter {
     /// (with enhancements), used by the maze search if [`Self::history_in_costs`].
     pub failure_history: Option<FailureHistory>,
     pub history_in_costs: bool,
+    /// fastroute global routing: the nets' corridors, preferred by the maze search.
+    pub corridors_global: Option<Arc<super::global::GlobalCorridors>>,
     /// The corridors of failing connections (by item id), from their route on the pristine board.
     corridors: HashMap<i32, Arc<Corridor>>,
     /// Items (id, net) that failed in the current pass and have a corridor.
@@ -264,6 +266,7 @@ impl BatchAutorouter {
             pass_history: Vec::new(),
             failure_history: None,
             history_in_costs: false,
+            corridors_global: None,
             corridors: HashMap::new(),
             failed_this_pass: Vec::new(),
             fanout_timed_out: false,
@@ -296,6 +299,7 @@ impl BatchAutorouter {
             trace_pull_tight_accuracy: self.trace_pull_tight_accuracy,
             connect_to_planes: self.enhancements,
             history: self.failure_history.as_ref().filter(|h| self.history_in_costs && !h.is_empty()).map(|h| Arc::new(h.clone())),
+            corridors: self.corridors_global.clone(),
         }
     }
 

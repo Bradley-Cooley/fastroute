@@ -49,6 +49,7 @@ struct Args {
     escape: pipeline::EscapeMode,
     prune_variants: bool,
     failure_history: pipeline::HistoryMode,
+    global_route: pipeline::HistoryMode,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -78,6 +79,7 @@ fn parse_args() -> Result<Args, String> {
         escape: pipeline::EscapeMode::Off,
         prune_variants: false,
         failure_history: pipeline::HistoryMode::Off,
+        global_route: pipeline::HistoryMode::Off,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -148,6 +150,16 @@ fn parse_args() -> Result<Args, String> {
             }
             "--failure-history=only" => {
                 args.failure_history = pipeline::HistoryMode::Only;
+                i += 1;
+                continue;
+            }
+            "--global-route" => {
+                args.global_route = pipeline::HistoryMode::Variants;
+                i += 1;
+                continue;
+            }
+            "--global-route=only" => {
+                args.global_route = pipeline::HistoryMode::Only;
                 i += 1;
                 continue;
             }
@@ -303,6 +315,10 @@ options:
                            corridors of connections that keep failing (the stock variants
                            still run); =only: the first run and the stock variants use it
                            instead
+  --global-route           add N multi-start variants that prefer the corridors of a global
+                           routing with negotiated congestion (PathFinder) on board tiles
+                           (the stock variants still run); =only: the first run and the
+                           stock variants use them instead
   --prune-variants         stop the extra variants (costs, escape plan) once they fall
                            clearly behind the first run; the stock variants always finish
   --repair                 after routing, rip and re-route the copper in growing windows
@@ -600,6 +616,7 @@ fn run() -> Result<(), String> {
         cost_portfolio: args.cost_portfolio && !args.parity && !args.no_enhancements,
         escape: if args.parity || args.no_enhancements { pipeline::EscapeMode::Off } else { args.escape },
         prune_variants: args.prune_variants,
+        global_route: if args.parity || args.no_enhancements { pipeline::HistoryMode::Off } else { args.global_route },
         failure_history: if args.parity || args.no_enhancements { pipeline::HistoryMode::Off } else { args.failure_history },
         repair: (!args.parity && !args.no_enhancements)
             .then_some(args.repair)

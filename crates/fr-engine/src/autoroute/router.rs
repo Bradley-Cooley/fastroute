@@ -390,6 +390,8 @@ pub struct ConnectionRouterParams {
     pub connect_to_planes: bool,
     /// fastroute failure-only history (see [`super::history`]).
     pub history: Option<std::sync::Arc<super::history::FailureHistory>>,
+    /// fastroute global routing: the nets' corridors (see [`crate::pipeline::global`]).
+    pub corridors: Option<std::sync::Arc<crate::pipeline::global::GlobalCorridors>>,
 }
 
 /// The result of [`route_connection`].
@@ -457,6 +459,7 @@ fn route_connection_impl(
     ctrl.remove_unconnected_vias = params.remove_unconnected_vias;
     ctrl.connect_to_planes = params.connect_to_planes;
     ctrl.history = params.history.clone();
+    ctrl.corridors = params.corridors.clone();
     let unconnected_set = board.unconnected_set(item, route_net_no);
     if unconnected_set.is_empty() {
         return ConnectionRouteOutcome { result: AutorouteAttemptResult::new(AutorouteAttemptState::NoUnconnectedNets), max_item_id_before_route: None };
