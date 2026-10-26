@@ -39,6 +39,7 @@ pub mod connection;
 pub mod control;
 pub mod destination;
 pub mod engine;
+pub mod history;
 pub mod inserter;
 pub mod locator;
 pub mod maze;

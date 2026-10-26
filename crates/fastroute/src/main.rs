@@ -48,6 +48,7 @@ struct Args {
     cost_portfolio: bool,
     escape: pipeline::EscapeMode,
     prune_variants: bool,
+    failure_history: pipeline::HistoryMode,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -76,6 +77,7 @@ fn parse_args() -> Result<Args, String> {
         cost_portfolio: false,
         escape: pipeline::EscapeMode::Off,
         prune_variants: false,
+        failure_history: pipeline::HistoryMode::Off,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -136,6 +138,16 @@ fn parse_args() -> Result<Args, String> {
             }
             "--escape-plan=only" => {
                 args.escape = pipeline::EscapeMode::Only;
+                i += 1;
+                continue;
+            }
+            "--failure-history" => {
+                args.failure_history = pipeline::HistoryMode::Variants;
+                i += 1;
+                continue;
+            }
+            "--failure-history=only" => {
+                args.failure_history = pipeline::HistoryMode::Only;
                 i += 1;
                 continue;
             }
@@ -287,6 +299,10 @@ options:
                            fine-pitch parts on their layer where their connection can stay
                            there (the stock variants still run); =only: the first run and
                            the stock variants use the plan instead
+  --failure-history        add N multi-start variants that route with a cost history on the
+                           corridors of connections that keep failing (the stock variants
+                           still run); =only: the first run and the stock variants use it
+                           instead
   --prune-variants         stop the extra variants (costs, escape plan) once they fall
                            clearly behind the first run; the stock variants always finish
   --repair                 after routing, rip and re-route the copper in growing windows
@@ -584,6 +600,7 @@ fn run() -> Result<(), String> {
         cost_portfolio: args.cost_portfolio && !args.parity && !args.no_enhancements,
         escape: if args.parity || args.no_enhancements { pipeline::EscapeMode::Off } else { args.escape },
         prune_variants: args.prune_variants,
+        failure_history: if args.parity || args.no_enhancements { pipeline::HistoryMode::Off } else { args.failure_history },
         repair: (!args.parity && !args.no_enhancements)
             .then_some(args.repair)
             .flatten()

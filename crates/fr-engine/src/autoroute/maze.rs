@@ -666,14 +666,13 @@ impl<'a> MazeSearchEngine<'a> {
                 }
             }
         }
-        let expansion_value = from_element.expansion_value
-            + add_costs as f64
-            + bend_cost_penalty
-            + shape_entry_middle.weighted_distance(
-                &from_element.shape_entry.a.middle_point(&from_element.shape_entry.b),
-                ctrl.trace_costs[lu].horizontal,
-                ctrl.trace_costs[lu].vertical,
-            );
+        let from_middle = from_element.shape_entry.a.middle_point(&from_element.shape_entry.b);
+        let mut step = shape_entry_middle.weighted_distance(&from_middle, ctrl.trace_costs[lu].horizontal, ctrl.trace_costs[lu].vertical);
+        if let Some(h) = &ctrl.history {
+            // fastroute failure-only history: other nets' failing corridors cost more
+            step *= h.route_factor(layer, &from_middle.middle_point(&shape_entry_middle), ctrl.net_number);
+        }
+        let expansion_value = from_element.expansion_value + add_costs as f64 + bend_cost_penalty + step;
         let sorting_value = expansion_value + self.destination_distance.calculate_point(&shape_entry_middle, layer);
         let room_ripped = add_costs > 0 && adjustment == Adjustment::None || from_element.already_checked && from_element.room_ripped;
         let mut new_element = MazeListElement::new(
@@ -1237,6 +1236,11 @@ impl<'a> MazeSearchEngine<'a> {
         }
         ripup_cost /= detour;
         ripup_cost *= fanout_via_cost_factor;
+        if let Some(h) = &ctrl.history {
+            // fastroute failure-only history: ripping in the net's own failing corridor is cheaper
+            let at = list_element.shape_entry.a.middle_point(&list_element.shape_entry.b);
+            ripup_cost /= h.rip_divisor(self.room_layer(list_element.next_room.unwrap()), &at, ctrl.net_number);
+        }
         let mut result = (ripup_cost as i32).max(1);
         let max_ripup_costs = i32::MAX / 100;
         result = result.min(max_ripup_costs);

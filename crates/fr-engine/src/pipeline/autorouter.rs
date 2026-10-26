@@ -10,6 +10,7 @@ use std::time::Instant;
 use fr_settings::{ExpansionCostFactor, RouterSettings};
 
 use crate::autoroute::router::{route_connection, ConnectionRouterParams};
+use crate::autoroute::history::{Corridor, FailureHistory};
 use crate::autoroute::AutorouteAttemptResult;
 use crate::board::{AutorouteAttemptState, ItemKey, ItemSet, RoutingBoard, StopConnectionOption};
 use crate::datastructures::StopToken;
@@ -129,6 +130,14 @@ pub struct BatchAutorouter {
     /// fastroute: the unrouted connections after each autorouting pass (and the pass's
     /// seconds), for the multi-start variants to compare against.
     pub pass_history: Vec<(i32, f64)>,
+    /// fastroute failure-only history (see [`crate::autoroute::history`]): kept while set
+    /// (with enhancements), used by the maze search if [`Self::history_in_costs`].
+    pub failure_history: Option<FailureHistory>,
+    pub history_in_costs: bool,
+    /// The corridors of failing connections (by item id), from their route on the pristine board.
+    corridors: HashMap<i32, Arc<Corridor>>,
+    /// Items (id, net) that failed in the current pass and have a corridor.
+    failed_this_pass: Vec<(i32, NetNo)>,
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
@@ -140,6 +149,9 @@ pub struct BatchAutorouter {
     /// later passes (each attempt is a search over the whole reachable board).
     blocked: HashSet<i32>,
     blocked_checked: HashSet<i32>,
+    /// fastroute failure history: items that failed on the pristine board at their first
+    /// failure (skipped from their second failure on, as without the history).
+    pristine_failed: HashSet<i32>,
     /// fastroute: a parallel pass stops early once its board has more unrouted connections
     /// than this (the rollback threshold of the batch loop; the pass would be undone anyway).
     pass_abort_above: Option<i32>,
@@ -250,11 +262,16 @@ impl BatchAutorouter {
             prune: None,
             pruned_at: None,
             pass_history: Vec::new(),
+            failure_history: None,
+            history_in_costs: false,
+            corridors: HashMap::new(),
+            failed_this_pass: Vec::new(),
             fanout_timed_out: false,
             initial_unrouted_count: 0,
             pristine: None,
             blocked: HashSet::new(),
             blocked_checked: HashSet::new(),
+            pristine_failed: HashSet::new(),
             pass_abort_above: None,
             observer: None,
             previous_incomplete_nets: BTreeSet::new(),
@@ -278,6 +295,7 @@ impl BatchAutorouter {
             retain_autoroute_database: self.retain_autoroute_database,
             trace_pull_tight_accuracy: self.trace_pull_tight_accuracy,
             connect_to_planes: self.enhancements,
+            history: self.failure_history.as_ref().filter(|h| self.history_in_costs && !h.is_empty()).map(|h| Arc::new(h.clone())),
         }
     }
 
@@ -514,7 +532,7 @@ impl BatchAutorouter {
                     _ => {
                         record_failure(board, current, pass_no, &result);
                         let failure_count = board.failure_log.get_failure_count(&board.basic, current);
-                        self.note_failure(board, current, failure_count, settings);
+                        self.note_failure(board, current, board.item(current).net_number(i), failure_count, settings);
                         // Java rips the whole net after every failure from the second one on; a
                         // connection that can never be routed then tears down its (possibly
                         // large) net every pass. fastroute rips it once.
@@ -891,21 +909,48 @@ impl BatchAutorouter {
     /// item's net once after its second failure.
     /// fastroute: after the second failure of an item, routes it once alone on the pristine
     /// board; if it fails there as well, the item is skipped by the later passes.
-    fn note_failure(&mut self, board: &RoutingBoard, key: ItemKey, failure_count: i32, settings: &RouterSettings) {
-        if failure_count < 2 {
+    /// fastroute failure-only history: the route on the pristine board is the corridor the
+    /// connection wants; a failing item with a corridor is noted for the history update.
+    fn note_failure(&mut self, board: &RoutingBoard, key: ItemKey, net: NetNo, failure_count: i32, settings: &RouterSettings) {
+        // with the failure history the pristine route (the corridor) is wanted from the first
+        // failure on; the item is still only skipped from its second failure on
+        if failure_count < 2 && self.failure_history.is_none() {
             return;
         }
         let Some(pristine) = &self.pristine else { return };
         let id = board.item(key).id().0;
-        if !self.blocked_checked.insert(id) {
-            return;
-        }
-        let mut b = (**pristine).clone();
-        let Some(k) = b.get_item(ItemId(id)) else { return };
-        let r = b.autoroute(k, settings, settings.get_via_costs(), None, None);
-        if matches!(r.state, AutorouteAttemptState::Failed | AutorouteAttemptState::InsertError) {
-            log::debug!(target: "fr_engine::pipeline::diag", "item #{id} cannot be routed on the pristine board ({}): skipped from now on", r.details);
+        if failure_count >= 2 && self.pristine_failed.contains(&id) {
             self.blocked.insert(id);
+        }
+        if self.blocked_checked.insert(id) {
+            let mut b = (**pristine).clone();
+            let Some(k) = b.get_item(ItemId(id)) else { return };
+            let route_net = b.item(k).net_number(0);
+            let before: HashSet<i32> = b.get_connectable_items(route_net).into_iter().map(|t| b.item(t).id().0).collect();
+            let r = b.autoroute(k, settings, settings.get_via_costs(), None, None);
+            if matches!(r.state, AutorouteAttemptState::Failed | AutorouteAttemptState::InsertError) {
+                log::debug!(target: "fr_engine::pipeline::diag", "item #{id} cannot be routed on the pristine board ({}): skipped from now on", r.details);
+                if failure_count >= 2 {
+                    self.blocked.insert(id);
+                } else {
+                    self.pristine_failed.insert(id);
+                }
+            } else if let Some(h) = &self.failure_history {
+                // the corridor: the connection's new traces on the pristine board
+                let paths: Vec<_> = b
+                    .get_connectable_items(route_net)
+                    .into_iter()
+                    .filter(|&t| !before.contains(&b.item(t).id().0))
+                    .filter_map(|t| b.item(t).as_trace().map(|tr| (tr.layer(), tr.polyline().corner_approx_arr())))
+                    .collect();
+                let corridor = h.corridor(&paths);
+                if !corridor.is_empty() {
+                    self.corridors.insert(id, Arc::new(corridor));
+                }
+            }
+        }
+        if self.failure_history.is_some() && self.corridors.contains_key(&id) {
+            self.failed_this_pass.push((id, net));
         }
     }
 
@@ -913,7 +958,7 @@ impl BatchAutorouter {
     fn handle_failure(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, current: ItemKey, net_index: usize, pass_no: i32, result: &AutorouteAttemptResult, c: &mut PassCounters) {
         record_failure(board, current, pass_no, result);
         let failure_count = board.failure_log.get_failure_count(&board.basic, current);
-        self.note_failure(board, current, failure_count, settings);
+        self.note_failure(board, current, board.item(current).net_number(net_index as i32), failure_count, settings);
         let rip_net = failure_count == 2 && !self.suppress_net_rip;
         if rip_net {
             let net_no = board.item(current).net_number(net_index as i32);
@@ -1055,6 +1100,13 @@ impl BatchAutorouter {
                 .then(|| fewest_incomplete + ((fewest_incomplete - ignored) * 3 / 10).max(20));
             let (cont, counters) = self.autoroute_pass(board, settings, current_pass, stop);
             continue_autorouting = cont;
+            if let Some(h) = &mut self.failure_history {
+                let failed = std::mem::take(&mut self.failed_this_pass);
+                h.update(failed.iter().filter_map(|(id, net)| self.corridors.get(id).map(|c| (*net, &**c))));
+                if !failed.is_empty() {
+                    log::debug!(target: "fr_engine::pipeline::diag", "failure history after pass #{current_pass}: {} failing corridors, {} cells", failed.len(), h.cell_count());
+                }
+            }
             let mut after = stats.score(board, settings);
 
             if bh.size() >= STOP_AT_PASS_MINIMUM as usize || stop.is_stop_autorouter_requested() {

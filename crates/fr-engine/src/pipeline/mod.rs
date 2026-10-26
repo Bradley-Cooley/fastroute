@@ -44,6 +44,7 @@ use crate::board::RoutingBoard;
 use crate::datastructures::StopToken;
 
 pub use autorouter::{BatchAutorouter, PassCounters};
+use crate::autoroute::history::FailureHistory;
 pub use history::{board_hash, BoardHistory};
 pub use optimizer::{BatchOptimizer, OptimizerMode};
 pub use stats::StatsCache;
@@ -70,6 +71,8 @@ pub struct PipelineContext {
     pub cost_portfolio: bool,
     /// fastroute escape planner (`--escape-plan`): see [`EscapeMode`].
     pub escape: EscapeMode,
+    /// fastroute failure-only history (`--failure-history`): see [`HistoryMode`].
+    pub failure_history: HistoryMode,
     /// fastroute (`--prune-variants`): stop the extra multi-start variants (cost portfolio,
     /// escape plan) that fall clearly behind the first run (see [`autorouter::PruneRule`]).
     pub prune_variants: bool,
@@ -134,6 +137,7 @@ impl std::fmt::Debug for PipelineContext {
             .field("multi_start", &self.multi_start)
             .field("cost_portfolio", &self.cost_portfolio)
             .field("escape", &self.escape)
+            .field("failure_history", &self.failure_history)
             .field("prune_variants", &self.prune_variants)
             .field("repair", &self.repair)
             .field("checkpoint", &self.checkpoint.is_some())
@@ -168,6 +172,7 @@ impl Default for PipelineContext {
             multi_start: 1,
             cost_portfolio: false,
             escape: EscapeMode::Off,
+            failure_history: HistoryMode::Off,
             prune_variants: false,
             repair: None,
             checkpoint: None,
@@ -185,6 +190,18 @@ pub enum EscapeMode {
     /// route with the escape plan, next to the stock ones: the best board can only get better.
     Variants,
     /// The first run and the stock variants route with the escape plan (to measure it).
+    Only,
+}
+
+/// fastroute failure-only history modes (see [`crate::autoroute::history`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HistoryMode {
+    #[default]
+    Off,
+    /// `multi_start` more multi-start variants (the first-run order and the stock orders)
+    /// route with the history, next to the stock ones: the best board can only get better.
+    Variants,
+    /// The first run and the stock variants route with the history (to measure it).
     Only,
 }
 
@@ -250,6 +267,10 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     });
     if ctx.escape == EscapeMode::Only {
         autorouter.fanout_skip_pins = escape_plan.clone();
+    }
+    if ctx.enhancements && ctx.failure_history == HistoryMode::Only {
+        autorouter.failure_history = Some(FailureHistory::new(board.communication.get_resolution(crate::structure::Unit::Um)));
+        autorouter.history_in_costs = true;
     }
 
     // runRoutingStage
@@ -344,6 +365,8 @@ fn multi_start(
         skip: Option<std::sync::Arc<std::collections::BTreeSet<i32>>>,
         /// a stock variant (never pruned)
         stock: bool,
+        /// routes with the failure history
+        history: bool,
     }
     let n = ctx.multi_start;
     let only = ctx.escape == EscapeMode::Only && escape_plan.is_some_and(|p| !p.is_empty());
@@ -354,6 +377,7 @@ fn multi_start(
             settings: settings.clone(),
             skip: if only { escape_plan.cloned() } else { None },
             stock: true,
+            history: ctx.failure_history == HistoryMode::Only,
         })
         .collect();
     // The cost portfolio and the escape planner add their variants after the stock ones
@@ -368,6 +392,7 @@ fn multi_start(
                 settings: portfolio_settings(settings, k),
                 skip: None,
                 stock: false,
+                history: false,
             });
         }
     }
@@ -383,6 +408,20 @@ fn multi_start(
                 settings: settings.clone(),
                 skip: escape_plan.cloned(),
                 stock: false,
+                history: false,
+            });
+        }
+    }
+    if ctx.failure_history == HistoryMode::Variants {
+        for k in 0..n {
+            let order = if k == 0 { "first-run order".to_string() } else { format!("order {k}") };
+            specs.push(Variant {
+                label: format!(" (failure history, {order})"),
+                seed: (k > 0).then_some(k),
+                settings: settings.clone(),
+                skip: None,
+                stock: false,
+                history: true,
             });
         }
     }
@@ -406,6 +445,7 @@ fn multi_start(
                 multi_start: 1,
                 cost_portfolio: false,
                 escape: EscapeMode::Off,
+                failure_history: HistoryMode::Off,
                 prune_variants: false,
                 repair: None,
                 checkpoint: ctx.checkpoint.clone(),
@@ -415,6 +455,10 @@ fn multi_start(
             let mut router = BatchAutorouter::for_job(&b, &spec.settings);
             router.order_seed = spec.seed.map(|s| 0x5eed_0000 + s as i64);
             router.fanout_skip_pins = spec.skip.clone();
+            if spec.history {
+                router.failure_history = Some(FailureHistory::new(start.communication.get_resolution(crate::structure::Unit::Um)));
+                router.history_in_costs = true;
+            }
             if !spec.stock {
                 router.prune = prune.clone();
             }

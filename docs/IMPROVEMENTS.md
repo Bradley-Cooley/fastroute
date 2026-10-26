@@ -135,6 +135,33 @@ plan for only the dense parts the first run left connections unrouted at. On the
 the re-plan differed from the full plan on 5 boards and won on none (172 unrouted either
 way, +4 % time).
 
+## Failure-only history (`--failure-history`, new)
+
+A cost history like PathFinder's (see "Not adopted either" below), but only on the corridors
+of connections that keep failing. When a connection fails, it is routed alone on the
+pristine board (the check for connections that cannot be routed at all does this anyway);
+its path there is the corridor it wants, on a 0.5 mm grid per layer. After each pass the
+history halves, and every cell on the corridor of a connection that failed in the pass gains
+1. In the maze search, routing through a cell of another net's corridor costs
+×(1 + 0.5 h), and ripping items in the net's own corridor costs ÷(1 + h). The history only
+changes between passes, so routing stays deterministic.
+
+`--failure-history` adds `--multi-start` more variants with the history (the first run's
+order and the stock orders), next to the stock ones, so no board gets worse;
+`--failure-history=only` uses it in the first run and the stock variants instead. Each run
+builds its own history: starting the variants from the first run's history routed worse
+(quick suite: no board better; the history variants lost to the stock variant with the same
+order 33 times and won 14).
+
+Quick suite (28 boards, `-j 3`), `--escape-plan --multi-start-costs --prune-variants
+--repair-time=120` with and without `--failure-history`: unrouted 172 → 167 (stock 191),
+none worse, total time 9193 → 11340 s. Better: bm05 5 → 4 (a history variant), S1G
+20 → 16 (a history variant, then the repair stage). In the first run alone
+(`--failure-history=only --multi-start=1`, 11 boards) the result depends on the strength:
+163 → 151 unrouted with the factors above, about stock with 0.25-1 for the routing factor or
+a decay of 0.3-0.7, so on its own it is one more way to perturb the search rather than a
+reliable gain.
+
 ## Region repair (`--repair`, new)
 
 The autorouter routes one connection at a time. When the last connections fail, routing
@@ -345,8 +372,8 @@ through the region. On the quick suite (16 boards + lora_node, unrouted / total 
 history 101 / 774 s; rip-up cost ×(1 + h) 105 / 896 s; routing cost ×(1 + 0.3 h) 121 / 1018 s;
 both 106 / 1095 s. Some oscillating boards improved (S1G 21 → 18, SunLeaf 28 → 26) but others
 got worse (Aria 24 → 28–35, bm05 6 → 8) and every variant was slower. A coarse history also
-penalises regions that are crowded but passable; a finer or decaying history, or one applied
-only to the connections that fail, might still work.
+penalises regions that are crowded but passable; a history applied only to the connections
+that fail is `--failure-history` above.
 
 ## Open ideas
 
