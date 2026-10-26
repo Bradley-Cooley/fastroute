@@ -360,6 +360,24 @@ PCBench boards with the most dense parts (at most 150 parts each); on those, 77 
 pin; 6 of 12 fully routed). This is the case for planning the escapes of dense parts together
 instead of one pin at a time.
 
+With `--diagnose`, each escape connection is also routed alone (no rip-up) from its end at the
+part on copies of the final board (`escape.test`): as it is, without the traces and vias of the
+part's other nets within 2 mm of its pads, without those of all other nets there, and without
+both. On the five boards with the most escape failures (HDMI2RGB, Smart-Watch, Aria, SunLeaf,
+S1G; stock first run, 136 escape failures): 65 route once the part's own other escapes are
+cleared, 23 route even on the final board, 8 need the other nets cleared, 1 needs both, and 39
+fail even with the window cleared (12 of them blocked on the loaded board, all on Smart-Watch).
+
+Not adopted: escape windows in the repair stage (branch `escape-windows`). For each dense part
+with unrouted connections at its pins, the window ripped the connections of the part's nets
+(or of all nets) within 1-2 mm of its pads and re-routed them with the failed nets first. On
+the five boards above (`--multi-start=1`, repair budget 180 s) they took the budget from the
+small windows: 162 → 157 unrouted instead of 162 → 146. Tried only after the small windows ran
+out (budget 900 s), they improved no board. Clearing a part's escapes lets any one failed
+connection through, but routing them all again leaves as many unrouted: the space around the
+part is short, not the order. Planning the exits (vias and gaps around the part) is the next
+step.
+
 Not adopted: an automatic neck width (half the narrowest trace width) for boards without one.
 It routed some boards completely but left more unrouted on others (karabas-nano 4 → 15,
 pogo-pin 10 → 17), also when limited to insertion failures (Aria 24 → 32); after the contact
