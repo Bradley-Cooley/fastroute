@@ -205,9 +205,15 @@ pub enum HistoryMode {
     Only,
 }
 
-/// Multi-start variants run in parallel but each as long as the first run; after a longer
-/// first run they are skipped (a large board then spends an hour more for a few connections).
-const MULTI_START_MAX_FIRST_RUN: std::time::Duration = std::time::Duration::from_secs(600);
+/// Multi-start variants run in parallel but each about as long as the first run; after a
+/// longer first run they are skipped (a large board then spends an hour more for a few
+/// connections). The limit counts maze search steps (see
+/// [`crate::autoroute::maze::SEARCH_STEPS`]) instead of seconds, so the decision does not
+/// depend on the machine's load. Sequential routing runs at about 30 000-125 000 steps per
+/// second on a cloud core (75 000-90 000 on the larger boards of the quick suite), so the
+/// limit is roughly 10 minutes per variant; no board of the quick suite reaches it (SunLeaf,
+/// the largest, takes about 13 million).
+const MULTI_START_MAX_STEPS: u64 = 50_000_000;
 
 /// fastroute cost portfolio: (via cost factor, rip-up cost factor) of cost variant `k`
 /// (1-based, with the order seed of stock variant `k`), taken at `(k - 1) % len`. Cheap vias help boards that run out of room on one layer,
@@ -279,17 +285,19 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     if router_enabled && !ctx.stop.is_stop_autorouter_requested() {
         let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
         let routing_start = std::time::Instant::now();
+        let steps_before = crate::autoroute::maze::SEARCH_STEPS.load(std::sync::atomic::Ordering::Relaxed);
         autorouter.run_batch_loop(board, settings, ctx);
+        let steps = crate::autoroute::maze::SEARCH_STEPS.load(std::sync::atomic::Ordering::Relaxed) - steps_before;
+        log::debug!("First routing run: {} maze search steps in {:.1} s.", steps, routing_start.elapsed().as_secs_f64());
         if let Some(start) = unrouted_board {
-            // the variants route with sequential passes: after a parallel first run they take
-            // several times as long
-            let took = routing_start.elapsed();
-            let variant_estimate = if autorouter.pass_threads > 1 { took * 3 } else { took };
-            if variant_estimate > MULTI_START_MAX_FIRST_RUN {
+            // decided by the maze search steps of the first run, not by its wall-clock time,
+            // so the decision (and the result) does not depend on the machine's load
+            if steps > MULTI_START_MAX_STEPS {
                 log::info!(
-                    "Multi-start skipped: the first routing run took {:.0} s (variants run only if they are expected to take less than {} s).",
-                    took.as_secs_f64(),
-                    MULTI_START_MAX_FIRST_RUN.as_secs()
+                    "Multi-start skipped: the first routing run took {} maze search steps in {:.0} s (variants run only after at most {}).",
+                    steps,
+                    routing_start.elapsed().as_secs_f64(),
+                    MULTI_START_MAX_STEPS
                 );
             } else {
                 ctx.observe(board, &LiveEvent::Stage("multi-start"));
