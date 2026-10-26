@@ -77,6 +77,8 @@ pub struct PipelineContext {
     /// fastroute global routing with negotiated congestion (`--global-route`): see
     /// [`global`]; the modes are those of [`HistoryMode`].
     pub global_route: HistoryMode,
+    /// The graph of the global routing (`--global-graph`).
+    pub global_graph: global::GraphKind,
     /// fastroute (`--prune-variants`): stop the extra multi-start variants (cost portfolio,
     /// escape plan) that fall clearly behind the first run (see [`autorouter::PruneRule`]).
     pub prune_variants: bool,
@@ -143,6 +145,7 @@ impl std::fmt::Debug for PipelineContext {
             .field("escape", &self.escape)
             .field("failure_history", &self.failure_history)
             .field("global_route", &self.global_route)
+            .field("global_graph", &self.global_graph)
             .field("prune_variants", &self.prune_variants)
             .field("repair", &self.repair)
             .field("checkpoint", &self.checkpoint.is_some())
@@ -179,6 +182,7 @@ impl Default for PipelineContext {
             escape: EscapeMode::Off,
             failure_history: HistoryMode::Off,
             global_route: HistoryMode::Off,
+            global_graph: global::GraphKind::Triangles,
             prune_variants: false,
             repair: None,
             checkpoint: None,
@@ -274,7 +278,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     if ctx.escape == EscapeMode::Only {
         autorouter.fanout_skip_pins = escape_plan.clone();
     }
-    let corridors = (ctx.enhancements && ctx.global_route != HistoryMode::Off).then(|| global_corridors(board, settings)).flatten();
+    let corridors = (ctx.enhancements && ctx.global_route != HistoryMode::Off).then(|| global_corridors(board, settings, ctx.global_graph)).flatten();
     if ctx.global_route == HistoryMode::Only {
         autorouter.corridors_global = corridors.clone();
     }
@@ -478,6 +482,7 @@ fn multi_start(
                 escape: EscapeMode::Off,
                 failure_history: HistoryMode::Off,
                 global_route: HistoryMode::Off,
+                global_graph: ctx.global_graph,
                 prune_variants: false,
                 repair: None,
                 checkpoint: ctx.checkpoint.clone(),
@@ -540,24 +545,23 @@ fn multi_start(
 
 /// Global routing (see [`global`]) of `board`: the corridors of its nets, or `None` if the
 /// board has nothing to route.
-fn global_corridors(board: &RoutingBoard, settings: &RouterSettings) -> Option<std::sync::Arc<global::GlobalCorridors>> {
+fn global_corridors(board: &RoutingBoard, settings: &RouterSettings, kind: global::GraphKind) -> Option<std::sync::Arc<global::GlobalCorridors>> {
     let t = std::time::Instant::now();
     let basic: &crate::board::BasicBoard = board;
     let default_class = basic.rules.default_net_class();
     let net = (1..=basic.rules.nets.max_net_number())
         .find(|&n| basic.rules.nets.get(n).is_some_and(|x| x.get_net_class() == default_class && !x.contains_plane()))?;
     let ctrl = crate::autoroute::AutorouteControl::new_default(board, net, settings);
-    let graph = global::CapacityGraph::build(board, &ctrl)?;
+    let graph = global::build_graph(board, &ctrl, settings, kind)?;
     let connections = global::board_connections(board, &graph);
     if connections.is_empty() {
         return None;
     }
-    let result = global::global_route(&graph, &connections, settings, ctrl.min_normal_via_cost);
+    let result = global::global_route(&graph, &connections);
     log::info!(
-        "Global routing: {} x {} tiles of {:.2} mm on {} layers, {} connections, {} iterations, overflow {} on {} edges ({:.1} s).",
-        graph.nx,
-        graph.ny,
-        graph.tile / board.communication.get_resolution(crate::structure::Unit::Mm),
+        "Global routing ({:?}): {} regions on {} layers, {} connections, {} iterations, overflow {} on {} edges ({:.1} s).",
+        graph.kind,
+        graph.node_count(),
         graph.layers.len(),
         result.connections,
         result.iterations,

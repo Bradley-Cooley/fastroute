@@ -50,6 +50,7 @@ struct Args {
     prune_variants: bool,
     failure_history: pipeline::HistoryMode,
     global_route: pipeline::HistoryMode,
+    global_graph: fr_engine::pipeline::global::GraphKind,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -80,6 +81,7 @@ fn parse_args() -> Result<Args, String> {
         prune_variants: false,
         failure_history: pipeline::HistoryMode::Off,
         global_route: pipeline::HistoryMode::Off,
+        global_graph: fr_engine::pipeline::global::GraphKind::Triangles,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -160,6 +162,16 @@ fn parse_args() -> Result<Args, String> {
             }
             "--global-route=only" => {
                 args.global_route = pipeline::HistoryMode::Only;
+                i += 1;
+                continue;
+            }
+            "--global-graph=squares" => {
+                args.global_graph = fr_engine::pipeline::global::GraphKind::Squares;
+                i += 1;
+                continue;
+            }
+            "--global-graph=triangles" => {
+                args.global_graph = fr_engine::pipeline::global::GraphKind::Triangles;
                 i += 1;
                 continue;
             }
@@ -319,6 +331,8 @@ options:
                            routing with negotiated congestion (PathFinder) on board tiles
                            (the stock variants still run); =only: the first run and the
                            stock variants use them instead
+  --global-graph=G         triangles (default: a triangulation over the pads, whose sides
+                           are the gaps between them) | squares (square tiles)
   --prune-variants         stop the extra variants (costs, escape plan) once they fall
                            clearly behind the first run; the stock variants always finish
   --repair                 after routing, rip and re-route the copper in growing windows
@@ -616,6 +630,7 @@ fn run() -> Result<(), String> {
         cost_portfolio: args.cost_portfolio && !args.parity && !args.no_enhancements,
         escape: if args.parity || args.no_enhancements { pipeline::EscapeMode::Off } else { args.escape },
         prune_variants: args.prune_variants,
+        global_graph: args.global_graph,
         global_route: if args.parity || args.no_enhancements { pipeline::HistoryMode::Off } else { args.global_route },
         failure_history: if args.parity || args.no_enhancements { pipeline::HistoryMode::Off } else { args.failure_history },
         repair: (!args.parity && !args.no_enhancements)
