@@ -375,6 +375,25 @@ got worse (Aria 24 → 28–35, bm05 6 → 8) and every variant was slower. A co
 penalises regions that are crowded but passable; a history applied only to the connections
 that fail is `--failure-history` above.
 
+Not adopted either: a global router feeding corridors to the detailed maze search
+(negotiated congestion, PathFinder over a coarse graph). Each connection was routed with
+present and history costs on a coarse graph of the board, with Steiner sharing within a net,
+until no graph edge was over capacity; the detailed search then cost ×2 outside the
+connection's corridor. Two graphs were tried, on the 11-board tuning set (first run only,
+stock 163 unrouted):
+* square tiles (1.5–3.5 mm, side capacity from the free gap): overflow stayed high on the
+  dense boards (StickHub 30, CM5 38, SmartWatch 34 edges) because pins and vias fill whole
+  tiles; with the tiles at connection ends exempted, 167–180 unrouted. As extra multi-start
+  variants on the 28-board suite: 167 unrouted (no gain over the variants without it),
+  +18% time, 9 boards better and 36 worse against the matching stock variants.
+* a triangulation of the pins and obstacle corners (capacity of a side = (gap − clearance) /
+  trace pitch): overflow only on SunLeaf (4 edges) and CM5 (2), but the corridors still hurt
+  at every strength: outside-corridor factor ×2 181, ×1.25 178, ×1.1 171 unrouted.
+The global routes are feasible in the coarse model but not good guides for the detailed
+search: the maze router already finds its way around congestion through rip-up, and a
+corridor mostly stops it from taking a better detour. The code is on the
+`negotiated-congestion` branch.
+
 ## Open ideas
 
 - CLI users feeding KiCad DSN files directly get none of the plugin's export
