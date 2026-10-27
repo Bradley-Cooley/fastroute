@@ -15,8 +15,12 @@ log = "0.4"
 mimalloc = { version = "0.1", default-features = false }
 ctrlc = { version = "3.4.5", features = ["termination"] }
 dhat = { version = "0.3", optional = true }
+pprof = { version = "0.14", optional = true, default-features = false }
 
 [features]
 # heap profiling (writes dhat-heap.json; view with https://nnethercote.github.io/dh_view/dh_view.html)
 dhat-heap = ["dep:dhat"]
+# CPU profiling without perf events (SIGPROF sampling): writes the samples to the file named by
+# FASTROUTE_CPU_PROFILE (see docs/PERFORMANCE.md)
+cpu-profile = ["dep:pprof"]
 

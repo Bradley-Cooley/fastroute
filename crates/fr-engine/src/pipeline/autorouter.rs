@@ -54,6 +54,10 @@ const PARALLEL_RETRIES: u8 = 2;
 /// fastroute: connections in flight per thread in the parallel pass.
 const PARALLEL_WINDOW_PER_THREAD: usize = 2;
 
+/// The board after the fanout stage and the stage's summary (see
+/// [`BatchAutorouter::fanout_cache`]).
+pub type FanoutCache = std::sync::OnceLock<(RoutingBoard, fanout::FanoutRunSummary)>;
+
 /// fastroute multi-start: when an extra variant (cost portfolio, escape plan) is stopped
 /// early. The variant is compared pass by pass with the first routing run, which finished
 /// before the variants started, so the decision does not depend on thread timing: from pass
@@ -122,6 +126,11 @@ pub struct BatchAutorouter {
     /// fastroute escape planner: SMD pins (by item id) the fanout stage leaves alone, because
     /// the plan routes them on their own layer (see [`super::escape::plan_escapes`]).
     pub fanout_skip_pins: Option<std::sync::Arc<BTreeSet<i32>>>,
+    /// fastroute multi-start: the board after the fanout stage, shared by the runs that start
+    /// from the same board with the same settings and skipped pins (the fanout does not depend
+    /// on anything else, so they would all compute the same board). The first run to get here
+    /// computes it.
+    pub fanout_cache: Option<Arc<FanoutCache>>,
     /// fastroute multi-start: stops the run once it falls clearly behind a reference run (see
     /// [`PruneRule`]); only set for the extra variants, never for the stock ones.
     pub prune: Option<PruneRule>,
@@ -259,6 +268,7 @@ impl BatchAutorouter {
             order_seed: None,
             priority_nets: None,
             fanout_skip_pins: None,
+            fanout_cache: None,
             prune: None,
             pruned_at: None,
             pass_history: Vec::new(),
@@ -1035,7 +1045,19 @@ impl BatchAutorouter {
             } else {
                 let t = Instant::now();
                 ctx.observe(board, &super::LiveEvent::Stage("fanout"));
-                let summary = fanout::fanout_board(board, settings, ctx, self.fanout_skip_pins.as_deref());
+                let summary = match &self.fanout_cache {
+                    Some(cache) => {
+                        let skip = self.fanout_skip_pins.as_deref();
+                        let (b, summary) = cache.get_or_init(|| {
+                            let mut b = board.clone();
+                            let summary = fanout::fanout_board(&mut b, settings, ctx, skip);
+                            (b, summary)
+                        });
+                        *board = b.clone();
+                        *summary
+                    }
+                    None => fanout::fanout_board(board, settings, ctx, self.fanout_skip_pins.as_deref()),
+                };
                 self.fanout_timed_out = summary.timed_out;
                 log::info!(
                     "Fanout stage {} {} passes, completed in {:.2} seconds.",
