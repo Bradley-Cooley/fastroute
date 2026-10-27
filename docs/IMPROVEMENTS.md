@@ -376,8 +376,7 @@ the five boards above (`--multi-start=1`, repair budget 180 s) they took the bud
 small windows: 162 → 157 unrouted instead of 162 → 146. Tried only after the small windows ran
 out (budget 900 s), they improved no board. Clearing a part's escapes lets any one failed
 connection through, but routing them all again leaves as many unrouted: the space around the
-part is short, not the order. Planning the exits (vias and gaps around the part) is the next
-step.
+part is short, not the order.
 
 Not adopted: an automatic neck width (half the narrowest trace width) for boards without one.
 It routed some boards completely but left more unrouted on others (karabas-nano 4 → 15,
@@ -421,6 +420,22 @@ first 157, density 167, crossings 167, long first 175, so routing the hardest ne
 not help. As four extra multi-start variants on the quick suite: 191 → 188 unrouted, none
 worse, +61% time; but on top of `--escape-plan --multi-start-costs --failure-history
 --prune-variants --repair-time=120` (167) they won no board and cost 11% more time.
+
+Not adopted either: planning the exits of dense parts (branch `escape-via-sites`). After the
+fanout fix, on the five boards above (82 unrouted with all options, 76 of them escapes from
+0.5 mm parts), three ways to give the pins of a part more room to leave were tried, each on
+the first run alone (`--multi-start=1`, 110 unrouted without them):
+* escape lanes: the strip in front of each pad (to 0.5–1.5 mm beyond it) reserved for the
+  pad's net, other nets paying ×2–4 to route through it: 109–121 unrouted, and 105–109 with
+  four starts (106 without).
+* the fanout's own settings: escape length 8 mm 121, inner-first pin order 135, unsorted 114
+  (escape length 5 mm: 104 on the four boards other than Aria, which have 88 without it).
+* planned via sites: each pin of a dense part whose nearest target is more than 3–20 mm away
+  got a via at its pad end before the fanout, alternately outside the pad row and under the
+  part, so that no trace has to pass between two vias (Aria: 44 vias, 19 outside, 25 inside):
+  123–135. The vias take room the router would have used better, and it cannot move them.
+None of them changed what the diagnosis shows: the space around these parts is short, and
+the router already uses it about as well as these rules do.
 
 ## Open ideas
 
