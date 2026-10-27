@@ -255,6 +255,12 @@ impl BasicBoard {
                 .expect("tree shape")
                 .bounding_octagon()
                 .expect("bounding octagon");
+            // fastroute: an obstacle that overlaps none of the rooms leaves the rooms and their
+            // bounding shape (the union of the rooms) as they are; the walk only knows that it
+            // overlaps the bounding shape
+            if !result.iter().any(|(current_shape, _)| current_shape.overlaps(&object_shape)) {
+                continue;
+            }
             new_result.clear();
             let mut new_bounding_shape = IntOctagon::EMPTY;
             for &(current_shape, current_contained) in &result {

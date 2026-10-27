@@ -227,6 +227,31 @@ Time: parallel mode unchanged or faster; exact mode (single thread) +3–4 % (CM
 interf_u 14.8 → 15.4 s) from the chunked node and slot reads. Storing the traversal array and
 the grid chunked as well cost +9–14 %, which is why they are shared whole.
 
+## Round 3
+
+Measured on a 4-core Linux machine. Gate: Aria, S1G_Mod_868, PSLab and
+Hardware_Playground_minimal (PCBench fixtures) routed with `--router.optimizer.enabled=false
+--router.autorouter.max_threads=1` by the pre-change and the new binary, byte-identical SES in
+three configurations: default, `--parity`, and the multi-start stack (`--multi-start=4
+--escape-plan --multi-start-costs --failure-history --prune-variants`); `cargo test --release
+--workspace` unchanged.
+
+Profiling: `cargo build --release --features cpu-profile -p fastroute`, then
+`FASTROUTE_CPU_PROFILE=out.folded fastroute ...` writes folded stacks (`thread;outer;...;inner
+count`, SIGPROF sampling at 1 kHz, so it works where perf events are not allowed, e.g. in
+containers). Any flame graph tool reads the format. Aria, one routing run, one thread: maze
+search 84 % (room completion 51 %, of which the 45-degree `completeShape` walk 30 %; drill
+rooms 34 %), the `Arc::get_mut` atomics of `CowVec` writes ≈ 4.5 %.
+
+| # | Change | Where | Measured effect |
+|---|---|---|---|
+| R3.1 | 45-degree `completeShape`: an obstacle the tree walk returns (it overlaps the bounding shape) that overlaps none of the rooms changes nothing, so it is skipped before the restrain step | `complete_shape.rs` | ≈ 1 % (single run) |
+| R3.2 | `CowVec` writes use `Arc::make_mut` (one compare-exchange) instead of `Arc::get_mut` twice | `cow_vec.rs` | ≈ 2–3 % (single run) |
+| R3.3 | Multi-start: the fanout depends only on the start board, the settings and the skipped pins, so the variants with the first run's settings reuse its fanout board (one shared fanout per escape plan); only the cost portfolio variants compute their own | `pipeline/mod.rs`, `pipeline/autorouter.rs` (`FanoutCache`) | Aria multi-start stack 230 → 205 s (fanout 15 → 5 runs) |
+
+Single run R3.1 + R3.2: Aria 117.7 / 118.8 → 115.4 s, S1G 55.4 / 56.3 → 54.0 s; `--parity`
+unchanged within noise.
+
 ## Next ideas
 
 * 45-degree `completeShape` tree walk (~9 % self) and grid scans (~6 %) remain the largest

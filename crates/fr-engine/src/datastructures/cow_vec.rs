@@ -36,10 +36,8 @@ impl<T> Default for CowVec<T> {
 /// The chunk as a mutable slice, copied first if it is shared.
 #[inline]
 fn chunk_mut<T: Clone>(chunk: &mut Arc<[T]>) -> &mut [T] {
-    if Arc::get_mut(chunk).is_none() {
-        *chunk = Arc::from(&chunk[..]);
-    }
-    Arc::get_mut(chunk).expect("unshared chunk")
+    // one atomic compare-exchange for an unshared chunk (`Arc::get_mut` twice took two)
+    Arc::make_mut(chunk)
 }
 
 impl<T: Clone> CowVec<T> {

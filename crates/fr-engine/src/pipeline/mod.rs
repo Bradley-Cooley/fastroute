@@ -284,6 +284,9 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     let router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
     if router_enabled && !ctx.stop.is_stop_autorouter_requested() {
         let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
+        if unrouted_board.is_some() {
+            autorouter.fanout_cache = Some(Default::default());
+        }
         let routing_start = std::time::Instant::now();
         let steps_before = crate::autoroute::maze::SEARCH_STEPS.load(std::sync::atomic::Ordering::Relaxed);
         autorouter.run_batch_loop(board, settings, ctx);
@@ -302,7 +305,8 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
             } else {
                 ctx.observe(board, &LiveEvent::Stage("multi-start"));
                 let history: Vec<i32> = autorouter.pass_history.iter().map(|h| h.0).collect();
-                multi_start(board, &start, settings, ctx, escape_plan.as_ref(), history);
+                let first_fanout = (autorouter.fanout_skip_pins.clone(), autorouter.fanout_cache.clone().unwrap_or_default());
+                multi_start(board, &start, settings, ctx, escape_plan.as_ref(), history, first_fanout);
             }
         }
     } else if settings.is_fanout_enabled() && !ctx.stop.is_stop_autorouter_requested() {
@@ -348,7 +352,9 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
 /// shuffled first-pass orders (in parallel) and keeps the best board (fewest unrouted
 /// connections, then fewest clearance violations, then highest router score; ties keep the
 /// earlier variant, so the result does not depend on thread timing). The cost portfolio and
-/// the escape planner add their variants after the stock ones.
+/// the escape planner add their variants after the stock ones. `first_fanout` is the first
+/// run's skipped pins and fanout board, reused by the variants with the same settings and
+/// skipped pins.
 fn multi_start(
     board: &mut RoutingBoard,
     start: &RoutingBoard,
@@ -356,6 +362,7 @@ fn multi_start(
     ctx: &PipelineContext,
     escape_plan: Option<&std::sync::Arc<std::collections::BTreeSet<i32>>>,
     first_history: Vec<i32>,
+    first_fanout: (Option<std::sync::Arc<std::collections::BTreeSet<i32>>>, std::sync::Arc<autorouter::FanoutCache>),
 ) {
     use rayon::prelude::*;
     let mut stats = StatsCache::new();
@@ -375,6 +382,8 @@ fn multi_start(
         stock: bool,
         /// routes with the failure history
         history: bool,
+        /// routes with the first run's settings (not a cost portfolio variant)
+        first_settings: bool,
     }
     let n = ctx.multi_start;
     let only = ctx.escape == EscapeMode::Only && escape_plan.is_some_and(|p| !p.is_empty());
@@ -386,6 +395,7 @@ fn multi_start(
             skip: if only { escape_plan.cloned() } else { None },
             stock: true,
             history: ctx.failure_history == HistoryMode::Only,
+            first_settings: true,
         })
         .collect();
     // The cost portfolio and the escape planner add their variants after the stock ones
@@ -401,6 +411,7 @@ fn multi_start(
                 skip: None,
                 stock: false,
                 history: false,
+                first_settings: false,
             });
         }
     }
@@ -417,6 +428,7 @@ fn multi_start(
                 skip: escape_plan.cloned(),
                 stock: false,
                 history: false,
+                first_settings: true,
             });
         }
     }
@@ -430,6 +442,7 @@ fn multi_start(
                 skip: None,
                 stock: false,
                 history: true,
+                first_settings: true,
             });
         }
     }
@@ -439,6 +452,26 @@ fn multi_start(
         margin_pct: PRUNE_MARGIN_PCT,
         margin_min: PRUNE_MARGIN_MIN,
     });
+    // The fanout depends only on the start board, the settings and the skipped pins (not on the
+    // first-pass order or the failure history, which is empty until the first pass), so the
+    // variants with the first run's settings share one fanout board per set of skipped pins.
+    let mut fanouts = vec![first_fanout];
+    let fanout_caches: Vec<Option<std::sync::Arc<autorouter::FanoutCache>>> = specs
+        .iter()
+        .map(|spec| {
+            if !spec.first_settings {
+                return None;
+            }
+            let i = match fanouts.iter().position(|(skip, _)| skip.as_deref() == spec.skip.as_deref()) {
+                Some(i) => i,
+                None => {
+                    fanouts.push((spec.skip.clone(), Default::default()));
+                    fanouts.len() - 1
+                }
+            };
+            Some(fanouts[i].1.clone())
+        })
+        .collect();
     let variants: Vec<(usize, RoutingBoard, stats::Score, Vec<(i32, f64)>, Option<i32>)> = specs
         .par_iter()
         .enumerate()
@@ -463,6 +496,7 @@ fn multi_start(
             let mut router = BatchAutorouter::for_job(&b, &spec.settings);
             router.order_seed = spec.seed.map(|s| 0x5eed_0000 + s as i64);
             router.fanout_skip_pins = spec.skip.clone();
+            router.fanout_cache = fanout_caches[i].clone();
             if spec.history {
                 router.failure_history = Some(FailureHistory::new(start.communication.get_resolution(crate::structure::Unit::Um)));
                 router.history_in_costs = true;

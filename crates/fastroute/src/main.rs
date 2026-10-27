@@ -864,6 +864,8 @@ static GLOBAL: dhat::Alloc = dhat::Alloc;
 fn main() -> ExitCode {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
+    #[cfg(feature = "cpu-profile")]
+    let _cpu_profiler = cpu_profile::Profiler::start();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -946,4 +948,48 @@ fn parse_tune_file(path: &str) -> Result<Vec<fr_engine::tuning::TuneGroup>, Stri
         }
     }
     Ok(groups)
+}
+
+/// `--features cpu-profile`: samples the call stacks of all threads (SIGPROF, 1 kHz) while
+/// FASTROUTE_CPU_PROFILE is set and writes them, folded (`frame;frame;... count`, outermost
+/// first), to that file at the end of the run.
+#[cfg(feature = "cpu-profile")]
+mod cpu_profile {
+    pub struct Profiler {
+        guard: Option<(pprof::ProfilerGuard<'static>, String)>,
+    }
+
+    impl Profiler {
+        pub fn start() -> Self {
+            let guard = std::env::var("FASTROUTE_CPU_PROFILE").ok().and_then(|path| {
+                let g = pprof::ProfilerGuardBuilder::default()
+                    .frequency(1000)
+                    .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+                    .build()
+                    .ok()?;
+                Some((g, path))
+            });
+            Profiler { guard }
+        }
+    }
+
+    impl Drop for Profiler {
+        fn drop(&mut self) {
+            let Some((guard, path)) = self.guard.take() else { return };
+            let Ok(report) = guard.report().build() else { return };
+            let mut out = String::new();
+            for (frames, count) in report.data.iter() {
+                let names: Vec<String> = frames
+                    .frames
+                    .iter()
+                    .rev()
+                    .map(|f| f.first().map(|s| s.name()).unwrap_or_else(|| "?".into()))
+                    .collect();
+                out.push_str(&format!("{};{} {}\n", frames.thread_name, names.join(";"), count));
+            }
+            if let Err(e) = std::fs::write(&path, out) {
+                eprintln!("fastroute: cannot write the CPU profile to {path}: {e}");
+            }
+        }
+    }
 }
