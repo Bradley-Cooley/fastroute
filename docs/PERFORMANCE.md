@@ -249,7 +249,8 @@ rooms 34 %), the `Arc::get_mut` atomics of `CowVec` writes ≈ 4.5 %.
 | R3.2 | `CowVec` writes use `Arc::make_mut` (one compare-exchange) instead of `Arc::get_mut` twice | `cow_vec.rs` | ≈ 2–3 % (single run) |
 | R3.3 | Multi-start: the fanout depends only on the start board, the settings and the skipped pins, so the variants with the first run's settings reuse its fanout board (one shared fanout per escape plan); only the cost portfolio variants compute their own | `pipeline/mod.rs`, `pipeline/autorouter.rs` (`FanoutCache`) | Aria multi-start stack 230 → 205 s (fanout 15 → 5 runs) |
 
-Single run R3.1 + R3.2: Aria 117.7 / 118.8 → 115.4 s, S1G 55.4 / 56.3 → 54.0 s; `--parity`
+Single run R3.1 + R3.2 (two runs each): Aria 117.7 / 118.8 → 115.4 / 116.6 s, S1G 55.4 / 56.3 →
+54.0 / 54.8 s (≈ 2 %); `--parity`
 unchanged within noise.
 
 ## Next ideas
