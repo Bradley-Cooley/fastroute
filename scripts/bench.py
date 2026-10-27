@@ -19,6 +19,10 @@ Suites:
   FILE.dsn     a single board
   quick        28 boards that react to routing changes (unrouted connections or recent
                changes, and boards with many fine-pitch parts); run with -j 3, see QUICK_ARGS
+  quick-planes the quick suite with the original design's planes restored on the PCBench boards
+               whose power layers had them (scripts/restore_planes.py; the board names stay the
+               same, so --baseline compares with a quick run)
+  planes       only the boards quick-planes changes
 
 The `escape` column counts the unrouted connections with an end at a fine-pitch part.
 
@@ -80,14 +84,21 @@ class Board:
 
 
 def suite_boards(spec):
-    if spec == "quick":
+    if spec in ("quick", "quick-planes", "planes"):
+        from restore_planes import restore
+
         boards = []
         for suite, name in QUICK:
             if suite == "pcbench":
                 d = sorted(p for p in (FIXTURES / "PCBench").glob(name + "*") if (p / "unrouted.dsn").is_file())
                 if d:
-                    boards.append(Board("pcb/" + d[0].name[:30], d[0] / "unrouted.dsn", QUICK_ARGS))
-            else:
+                    dsn = d[0] / "unrouted.dsn"
+                    if spec != "quick" and restore(d[0], d[0] / "planes.dsn"):
+                        dsn = d[0] / "planes.dsn"
+                    elif spec == "planes":
+                        continue
+                    boards.append(Board("pcb/" + d[0].name[:30], dsn, QUICK_ARGS))
+            elif spec != "planes":
                 boards.append(Board(name, FIXTURES / suite / f"{name}.dsn", QUICK_ARGS))
         return boards
     if spec == "dac":
