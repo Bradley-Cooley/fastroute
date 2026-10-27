@@ -31,6 +31,7 @@
 
 pub mod autorouter;
 pub mod escape;
+pub mod escape_vias;
 pub mod fanout;
 pub mod history;
 pub mod optimizer;
@@ -273,6 +274,14 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     });
     if ctx.escape == EscapeMode::Only {
         autorouter.fanout_skip_pins = escape_plan.clone();
+    }
+    if let Ok(v) = std::env::var("FR_SITES") { // TUNE
+        let parts = escape::dense_parts(board);
+        let r = escape_vias::place_escape_vias(board, settings, &parts, v.parse().unwrap());
+        log::info!("Escape vias: {} outside, {} inside, {} without a free site", r.outside, r.inside, r.no_site);
+        let mut skip = autorouter.fanout_skip_pins.as_deref().cloned().unwrap_or_default();
+        skip.extend(r.pins);
+        autorouter.fanout_skip_pins = Some(std::sync::Arc::new(skip));
     }
     if ctx.enhancements && ctx.failure_history == HistoryMode::Only {
         autorouter.failure_history = Some(FailureHistory::new(board.communication.get_resolution(crate::structure::Unit::Um)));
