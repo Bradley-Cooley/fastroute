@@ -689,6 +689,9 @@ impl<'a> MazeSearchEngine<'a> {
             // fastroute failure-only history: other nets' failing corridors cost more
             step *= h.route_factor(layer, &from_middle.middle_point(&shape_entry_middle), ctrl.net_number);
         }
+        if let Some(l) = &ctrl.lanes {
+            step *= l.route_factor(layer, &from_middle, &shape_entry_middle, ctrl.net_number);
+        }
         let expansion_value = from_element.expansion_value + add_costs as f64 + bend_cost_penalty + step;
         let sorting_value = expansion_value + self.destination_distance.calculate_point(&shape_entry_middle, layer);
         let room_ripped = add_costs > 0 && adjustment == Adjustment::None || from_element.already_checked && from_element.room_ripped;

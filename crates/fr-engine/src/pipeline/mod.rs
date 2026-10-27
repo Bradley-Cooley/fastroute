@@ -283,6 +283,14 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         skip.extend(r.pins);
         autorouter.fanout_skip_pins = Some(std::sync::Arc::new(skip));
     }
+    if let Ok(v) = std::env::var("FR_LANES") { // TUNE
+        let mut it = v.split(',').map(|x| x.parse::<f64>().unwrap());
+        let (len, factor) = (it.next().unwrap(), it.next().unwrap());
+        let parts = escape::dense_parts(board);
+        let lanes = crate::autoroute::lanes::EscapeLanes::new(board, &parts, len, factor);
+        log::info!("Escape lanes: {} cells", lanes.cell_count());
+        autorouter.escape_lanes = Some(std::sync::Arc::new(lanes));
+    }
     if ctx.enhancements && ctx.failure_history == HistoryMode::Only {
         autorouter.failure_history = Some(FailureHistory::new(board.communication.get_resolution(crate::structure::Unit::Um)));
         autorouter.history_in_costs = true;
@@ -472,6 +480,11 @@ fn multi_start(
             let mut router = BatchAutorouter::for_job(&b, &spec.settings);
             router.order_seed = spec.seed.map(|s| 0x5eed_0000 + s as i64);
             router.fanout_skip_pins = spec.skip.clone();
+            if let Ok(v) = std::env::var("FR_LANES") { // TUNE
+                let mut it = v.split(',').map(|x| x.parse::<f64>().unwrap());
+                let (len, factor) = (it.next().unwrap(), it.next().unwrap());
+                router.escape_lanes = Some(std::sync::Arc::new(crate::autoroute::lanes::EscapeLanes::new(&b, &escape::dense_parts(&b), len, factor)));
+            }
             if spec.history {
                 router.failure_history = Some(FailureHistory::new(start.communication.get_resolution(crate::structure::Unit::Um)));
                 router.history_in_costs = true;

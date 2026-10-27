@@ -208,6 +208,7 @@ pub fn execute(board: &mut RoutingBoard, op: &str, t: &mut Tok) -> Option<Vec<St
                 trace_pull_tight_accuracy: s.trace_pull_tight_accuracy.unwrap(),
                 connect_to_planes: false,
                 history: None,
+                lanes: None,
             };
             let mut ripped = ItemSet::new();
             let outcome = route_connection(board, &s, &params, item, net_no, &mut ripped, None, pass, None);

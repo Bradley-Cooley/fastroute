@@ -390,6 +390,8 @@ pub struct ConnectionRouterParams {
     pub connect_to_planes: bool,
     /// fastroute failure-only history (see [`super::history`]).
     pub history: Option<std::sync::Arc<super::history::FailureHistory>>,
+    /// fastroute escape lanes (see [`super::lanes`]).
+    pub lanes: Option<std::sync::Arc<super::lanes::EscapeLanes>>,
 }
 
 /// The result of [`route_connection`].
@@ -457,6 +459,7 @@ fn route_connection_impl(
     ctrl.remove_unconnected_vias = params.remove_unconnected_vias;
     ctrl.connect_to_planes = params.connect_to_planes;
     ctrl.history = params.history.clone();
+    ctrl.lanes = params.lanes.clone();
     let unconnected_set = board.unconnected_set(item, route_net_no);
     if unconnected_set.is_empty() {
         return ConnectionRouteOutcome { result: AutorouteAttemptResult::new(AutorouteAttemptState::NoUnconnectedNets), max_item_id_before_route: None };

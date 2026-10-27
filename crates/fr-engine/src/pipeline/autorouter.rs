@@ -133,6 +133,8 @@ pub struct BatchAutorouter {
     /// fastroute failure-only history (see [`crate::autoroute::history`]): kept while set
     /// (with enhancements), used by the maze search if [`Self::history_in_costs`].
     pub failure_history: Option<FailureHistory>,
+    /// fastroute escape lanes (see [`crate::autoroute::lanes`]).
+    pub escape_lanes: Option<Arc<crate::autoroute::lanes::EscapeLanes>>,
     pub history_in_costs: bool,
     /// The corridors of failing connections (by item id), from their route on the pristine board.
     corridors: HashMap<i32, Arc<Corridor>>,
@@ -263,6 +265,7 @@ impl BatchAutorouter {
             pruned_at: None,
             pass_history: Vec::new(),
             failure_history: None,
+            escape_lanes: None,
             history_in_costs: false,
             corridors: HashMap::new(),
             failed_this_pass: Vec::new(),
@@ -296,6 +299,7 @@ impl BatchAutorouter {
             trace_pull_tight_accuracy: self.trace_pull_tight_accuracy,
             connect_to_planes: self.enhancements,
             history: self.failure_history.as_ref().filter(|h| self.history_in_costs && !h.is_empty()).map(|h| Arc::new(h.clone())),
+            lanes: self.escape_lanes.clone(),
         }
     }
 

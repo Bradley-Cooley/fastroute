@@ -41,6 +41,7 @@ pub mod destination;
 pub mod engine;
 pub mod history;
 pub mod inserter;
+pub mod lanes;
 pub mod locator;
 pub mod maze;
 pub mod neighbours;
