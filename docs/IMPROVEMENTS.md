@@ -351,6 +351,38 @@ the contact problems above (connections "routed" without changing the unrouted c
 `scripts/bench.py --suite quick -j 3` checks 16 sensitive boards in about 5 minutes; the full
 set (`dac,kicad,pcbench:60` plus exported KiCad boards) is for releases.
 
+The PCBench boards are harder than the designs they come from. Their conversion input is
+PCBench's processed copy of each board, which has no copper zones (Aria: 17 in the original,
+none in the processed board), while the designers' inner layers keep KiCad's `power` type. So
+the unrouted boards have power layers without planes: nothing may be routed on them and nothing
+connects to them, and ground and supply nets must be routed as traces through the same
+fine-pitch escapes as the signals. The hand routes in `reference-routed.dsn` drop those pins to
+the inner planes instead (Aria: 262 vias against 49 in the autoroute). They are no target to
+match either: loaded under the board's own rules (`-mp -1`), every hand route of the 12 failing
+PCBench boards of the quick suite has clearance violations (3 to 1281, mostly vias closer to
+pins and vias than the clearance) and 10 of them leave connections open.
+
+`scripts/restore_planes.py` copies the original's zone outlines on power layers from
+`reference-routed.dsn` into the unrouted board (`planes.dsn` next to it); pours on signal
+layers stay out, because KiCad fills them around the tracks afterwards while the router would
+take them as fixed copper. `bench.py --suite quick-planes` is the quick suite with the restored
+boards under the same names (so `--baseline` compares with a quick run), `--suite planes` only
+the restored boards: Aria, S1G, SunLeaf, HDMI2RGB and Smart-Watch. Unrouted, stock and
+restored:
+
+| Board | default | default, planes | full stack | full stack, planes |
+|---|---|---|---|---|
+| Aria | 20 | 15 | 13 | 13 |
+| S1G | 10 | 3 | 7 | 2 |
+| SunLeaf | 18 | 11 | 18 | 7 |
+| HDMI2RGB | 35 | 30 | 31 | 29 |
+| Smart-Watch | 15 | 18 | 14 | 17 |
+| total | 98 | 77 | 83 | 68 |
+
+(full stack: `--escape-plan --multi-start-costs --failure-history --prune-variants
+--repair-time=120`). Smart-Watch gets worse: its ground plane is three separate outlines (two of
+its failures are ground connections) and its supply pour is on a signal layer, so it stays out.
+
 Every unrouted connection in the report also says whether it starts at a dense part
 (`escape`: a part with at least 16 SMD pins at a pitch of 0.65 mm or less, such as a QFN,
 QFP, TSSOP or BGA), with one end on a pin of the part (`at_pin`) or within 2 mm of its pads.
